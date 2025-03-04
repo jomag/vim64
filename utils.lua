@@ -88,3 +88,9 @@ function validate_u8(v)
 		fatal("invalid u8 value: valid range 0 to 255, got " .. v)
 	end
 end
+
+function get_key_count(tbl)
+	local count = 0
+	for _ in pairs(tbl) do count = count + 1 end
+	return count
+end

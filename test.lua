@@ -124,6 +124,7 @@ local function run_test_with_validation(rom_path, expect_path, cycles)
 		end
 		if not compare_states(cpu, mem, exp, exp_line) then
 			print("Test failed.")
+			printf("%d/151 instructions implemented\n", get_key_count(Cpu6502.instructions))
 			break
 		end
 

@@ -86,6 +86,22 @@ function Cpu6502:set_p(v)
 	self.p.c = v & 1 ~= 0
 end
 
+-- Perform subtraction and update flags accordingly
+-- All values are treated as unsigned 8 bit integers
+function Cpu6502:exec_sub(o1, o2)
+	self.p.c = o1 >= o2
+	self.p.z = o1 == o2
+	self.p.n = (o1 - o2) & 128 ~= 0
+	return (o1 - o2) & 0xFF
+end
+
+-- Update flags on load
+function Cpu6502:exec_load(v)
+	self.p.z = v == 0
+	self.p.n = v & 128 ~= 0
+	return v
+end
+
 function Cpu6502:reset_sequence(mem, force_start_address)
 	-- Reset sequence is not correctly emulated:
 	-- It initializes all registers to their expected values

@@ -24,7 +24,6 @@ end
 
 function MemoryMapper:get_wo_sideffects(adr)
 	validate_u16(adr)
-	print("RETURNING", self.ram[adr])
 	return self.ram[adr]
 end
 
