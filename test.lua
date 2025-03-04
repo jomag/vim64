@@ -35,8 +35,8 @@ local function run_test(cycles)
 	end
 end
 
-local function run_test_with_validation(rom_path, expect_path)
-	local cmp_list = { "pc", "ir", "a", "x", "y", "adr", "rnw", "d", "p" }
+local function run_test_with_validation(rom_path, expect_path, cycles)
+	local cmp_list = { "pc", "ir", "a", "x", "y", "adr", "rnw", "p", "sp", "data" }
 	local expect_file = io.open(expect_path, "r")
 	if not expect_file then
 		fatal("Failed to open " .. expect_path)
@@ -60,7 +60,7 @@ local function run_test_with_validation(rom_path, expect_path)
 		end
 
 		-- Hack: skip every second half cycle
-		if state.halfcyc ~= nil and state.halfcyc % 2 == 1 then
+		if state.halfcyc ~= nil and state.halfcyc % 2 == 0 then
 			return next_expected_state()
 		end
 
@@ -78,7 +78,7 @@ local function run_test_with_validation(rom_path, expect_path)
 		return s
 	end
 
-	local function compare_states(cpu, exp, exp_line)
+	local function compare_states(cpu, mem, exp, exp_line)
 		local res = true
 		for _, cmp in ipairs(cmp_list) do
 			local a = exp[cmp]
@@ -87,6 +87,12 @@ local function run_test_with_validation(rom_path, expect_path)
 				b = (cpu.read and 1) or 0
 			elseif cmp == "p" then
 				b = cpu:get_p()
+			elseif cmp == "data" then
+				if cpu.read then
+					b = mem:get_wo_sideffects(cpu.adr)
+				else
+					b = cpu.data
+				end
 			else
 				b = cpu[cmp]
 			end
@@ -95,8 +101,8 @@ local function run_test_with_validation(rom_path, expect_path)
 				if cmp == "p" then
 					print("                            N V 1 B D I Z C")
 				end
-				printf("  Expected: % 5d (0x%04x)  %s\n", a, a, format_bits(a, " "))
-				printf("  Got:      % 5d (0x%04x)  %s\n", b, b, format_bits(b, " "))
+				printf("  Expected: % 5d (0x%04x)%s\n", a, a, cmp == "p" and "  " .. format_bits(a, " ") or "")
+				printf("  Got:      % 5d (0x%04x)%s\n", b, b, cmp == "p" and "  " .. format_bits(b, " ") or "")
 				printf("  Raw expectation line:\n  %s\n", exp_line)
 				res = false
 			end
@@ -116,7 +122,7 @@ local function run_test_with_validation(rom_path, expect_path)
 			print("End of expected cycles. Success!")
 			break
 		end
-		if not compare_states(cpu, exp, exp_line) then
+		if not compare_states(cpu, mem, exp, exp_line) then
 			print("Test failed.")
 			break
 		end

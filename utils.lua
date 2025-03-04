@@ -1,5 +1,18 @@
 UNINITIALIZED = "uninitialized"
 
+function inc_byte(b)
+	return (b + 1) & 0xFF
+end
+
+function byte_as_i8(b)
+	validate_u8(b)
+	if b & 128 == 0 then
+		return b
+	else
+		return -(0x100 - b)
+	end
+end
+
 function printf(s, ...)
 	return io.write(s:format(...))
 end

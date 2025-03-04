@@ -22,6 +22,12 @@ function MemoryMapper:get(adr)
 	return self.ram[adr]
 end
 
+function MemoryMapper:get_wo_sideffects(adr)
+	validate_u16(adr)
+	print("RETURNING", self.ram[adr])
+	return self.ram[adr]
+end
+
 function MemoryMapper:set(adr, val)
 	validate_u8(val)
 	self.ram[adr] = val
