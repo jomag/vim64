@@ -26,6 +26,12 @@ local function generic_abs_cycle1(cpu)
 	cpu.tcu = 2
 end
 
+local function load_abs_cycle2(cpu)
+	cpu.adr = (cpu.data << 8) | cpu.LOW_BYTE
+	cpu.pc = cpu.pc + 1
+	cpu.tcu = 3
+end
+
 local function generic_abs_y_cycle1(cpu)
 	cpu.ABS_Y_PCL = cpu.data
 	cpu.pc = cpu.pc + 1
@@ -35,9 +41,18 @@ end
 
 local function generic_abs_y_cycle2(cpu)
 	cpu.pc = cpu.pc + 1
-	cpu.ABS_X_PCH = cpu.data << 8
-	cpu.adr = cpu.ABS_X_PCH + cpu.ABS_Y_PCL + cpu.y
-	cpu.tcu = 3
+	cpu.ABS_Y_PCH = cpu.data << 8
+	cpu.adr = cpu.ABS_Y_PCH + ((cpu.ABS_Y_PCL + cpu.y) & 0xFF)
+	if cpu.ABS_Y_PCL + cpu.y > 0xFF then
+		cpu.tcu = 3
+	else
+		cpu.tcu = 4
+	end
+end
+
+local function generic_abs_y_cycle3(cpu)
+	cpu.adr = cpu.ABS_Y_PCH + cpu.ABS_Y_PCL + cpu.y
+	cpu.tcu = 4
 end
 
 local function generic_abs_x_cycle1(cpu)
@@ -47,11 +62,23 @@ local function generic_abs_x_cycle1(cpu)
 	cpu.tcu = 2
 end
 
-local function generic_abs_x_cycle2(cpu)
+local function store_abs_x_cycle2(cpu)
 	cpu.pc = cpu.pc + 1
 	cpu.ABS_X_PCH = cpu.data << 8
-	cpu.adr = cpu.ABS_X_PCH + ((cpu.ABS_X_PCL + cpu.x) & 0xFF)
+	printf("Bukild add ffrom %x, %x, %x\n", cpu.ABS_X_PCH, cpu.ABS_X_PCL, cpu.x)
+	cpu.adr = (cpu.ABS_X_PCH) + ((cpu.ABS_X_PCL + cpu.x) & 0xFF)
 	cpu.tcu = 3
+end
+
+local function load_abs_x_cycle2(cpu)
+	cpu.pc = cpu.pc + 1
+	cpu.ABS_X_PCH = cpu.data << 8
+	cpu.adr = cpu.ABS_X_PCH + ((cpu.ABS_X_PCL + cpu.x) & 0xff)
+	if cpu.ABS_X_PCL + cpu.x > 0xFF then
+		cpu.tcu = 3
+	else
+		cpu.tcu = 4
+	end
 end
 
 local function generic_zp_indexed_cycle1(cpu)
@@ -77,7 +104,7 @@ local function generic_ind_y_cycle2(cpu)
 	cpu.tcu = 3
 end
 
-local function generic_ind_y_cycle3(cpu)
+local function load_ind_y_cycle3(cpu)
 	cpu.FINAL_ADR = (cpu.data << 8) + cpu.LOW + cpu.y
 	cpu.adr = (cpu.data << 8) + ((cpu.LOW + cpu.y) & 0xFF)
 	if cpu.adr ~= cpu.FINAL_ADR then
@@ -87,9 +114,54 @@ local function generic_ind_y_cycle3(cpu)
 	end
 end
 
+local function store_ind_y_cycle3(cpu)
+	cpu.FINAL_ADR = (cpu.data << 8) + cpu.LOW + cpu.y
+	cpu.adr = (cpu.data << 8) + ((cpu.LOW + cpu.y) & 0xFF)
+	cpu.tcu = 4
+end
+
 local function generic_ind_y_cycle4(cpu)
 	cpu.adr = cpu.FINAL_ADR
 	cpu.tcu = 5
+end
+
+local function generic_x_ind_cycle1(cpu)
+	cpu.pc = cpu.pc + 1
+	cpu.PCL = cpu.data
+	cpu.adr = cpu.data
+	cpu.tcu = 2
+end
+
+local function generic_x_ind_cycle2(cpu)
+	cpu.adr = (cpu.PCL + cpu.x) & 0xFF
+	cpu.tcu = 3
+end
+
+local function generic_x_ind_cycle3(cpu)
+	cpu.LOW = cpu.data
+	cpu.adr = cpu.adr + 1
+	cpu.tcu = 4
+end
+
+local function bitop_cyclen(cpu)
+	cpu.TMP = cpu.data
+	cpu.p.n = cpu.TMP & 128 ~= 0
+	cpu.p.o = cpu.TMP & 64 ~= 0
+
+	-- On the second cycle, zero flag is temporarily set if the
+	-- operand is zero. This is only relevant for cycle accurate
+	-- emulators that want to exactly copy the internal state
+	-- of the 6502. On the third cycle, the zero flag get the
+	-- expected value.
+	cpu.p.z = cpu.TMP == 0
+
+	cpu.adr = cpu.pc
+	cpu.tcu = 0
+end
+
+local function bitop_cycle0(cpu)
+	cpu.p.z = cpu.TMP & cpu.a == 0
+	prepare_next_op(cpu)
 end
 
 
@@ -579,6 +651,18 @@ Cpu6502.instructions = {
 		[0] = prepare_next_op,
 	},
 
+	-- 0x0A: ASL (implied)
+	[0x0A] = {
+		op = "ASL",
+		[1] = function(cpu) cpu.tcu = 0 end,
+		[0] = function(cpu)
+			cpu.p.c = (cpu.a << 1) > 0xFF
+			cpu.a = (cpu.a << 1) & 0xFF
+			cpu:exec_load(cpu.a)
+			prepare_next_op(cpu)
+		end
+	},
+
 	-- 0x10: BPL (relative)
 	-- Branch on plus
 	-- FIIXME: BEQ is the most accurate! Join implementation!
@@ -633,11 +717,46 @@ Cpu6502.instructions = {
 		[0] = prepare_next_op,
 	},
 
+	-- 0x24: BIT (zero-page)
+	[0x24] = {
+		op = "BIT",
+		[1] = read_zp_cycle1,
+		[2] = bitop_cyclen,
+		[0] = bitop_cycle0,
+	},
+
 	-- 0x28: PLP (implied)
 	-- Pull status register from stack
 	[0x28] = pull_op("PLP", function(cpu, val)
 		cpu:set_p(val | 16)
 	end),
+
+	-- 0x2A: ROL (implied)
+	[0x2A] = {
+		op = "ROL",
+		[1] = function(cpu)
+			cpu.tcu = 0
+		end,
+		[0] = function(cpu)
+			local c = cpu.a & 128 ~= 0
+			cpu.a = (cpu.a << 1) & 0xFF
+			if cpu.p.c then
+				cpu.a = cpu.a | 1
+			end
+			cpu.p.c = c
+			cpu:exec_load(cpu.a)
+			prepare_next_op(cpu)
+		end
+	},
+
+	-- 0x2C: BIT (absolute)
+	[0x2C] = {
+		op = "BIT",
+		[1] = generic_abs_cycle1,
+		[2] = load_abs_cycle2,
+		[3] = bitop_cyclen,
+		[0] = bitop_cycle0,
+	},
 
 	-- 0x30: BMI (relative)
 	-- Branch on minus
@@ -707,6 +826,20 @@ Cpu6502.instructions = {
 			cpu.tcu = 1
 			cpu.pc = cpu.pc + 1
 			cpu.adr = cpu.pc
+		end
+	},
+
+	-- 0x4A: LSR (implied)
+	[0x4A] = {
+		op = "LSR",
+		[1] = function(cpu)
+			cpu.p.c = cpu.a & 1 ~= 0
+			cpu.tcu = 0
+		end,
+		[0] = function(cpu)
+			cpu.a = (cpu.a >> 1) & 0xFF
+			cpu:exec_load(cpu.a)
+			prepare_next_op(cpu)
 		end
 	},
 
@@ -796,6 +929,24 @@ Cpu6502.instructions = {
 		end
 	},
 
+	-- 0x6A: ROR (implied)
+	[0x6A] = {
+		op = "ROR",
+		[1] = function(cpu)
+			cpu.TMP_C = cpu.p.c
+			cpu.p.c = cpu.a & 1 ~= 0
+			cpu.tcu = 0
+		end,
+		[0] = function(cpu)
+			cpu.a = (cpu.a >> 1) & 0xFF
+			if cpu.TMP_C then
+				cpu.a = cpu.a | 128
+			end
+			cpu:exec_load(cpu.a)
+			prepare_next_op(cpu)
+		end
+	},
+
 	-- 0x6C: JMP (indirect)
 	[0x6C] = {
 		op = "JMP",
@@ -835,6 +986,26 @@ Cpu6502.instructions = {
 			cpu.tcu = 0
 		end,
 		[0] = prepare_next_op,
+	},
+
+	-- 0x81: STA (X-indexed, indirect)
+	[0x81] = {
+		op = "STA",
+		[1] = generic_x_ind_cycle1,
+		[2] = generic_x_ind_cycle2,
+		[3] = generic_x_ind_cycle3,
+		[4] = function(cpu)
+			cpu.read = false
+			cpu.adr = (cpu.data << 8) + cpu.LOW
+			cpu.data = cpu.a
+			cpu.tcu = 5
+		end,
+		[5] = function(cpu)
+			cpu.read = true
+			cpu.adr = cpu.pc
+			cpu.tcu = 0
+		end,
+		[0] = prepare_next_op
 	},
 
 	-- 0x84: STA (zero-page)
@@ -887,14 +1058,14 @@ Cpu6502.instructions = {
 		op = "STA",
 		[1] = generic_ind_y_cycle1,
 		[2] = generic_ind_y_cycle2,
-		[3] = generic_ind_y_cycle3,
-		[4] = generic_ind_y_cycle4,
-		[5] = function(cpu)
+		[3] = store_ind_y_cycle3,
+		[4] = function(cpu)
+			cpu.adr = cpu.FINAL_ADR
 			cpu.read = false
 			cpu.data = cpu.a
-			cpu.tcu = 6
+			cpu.tcu = 5
 		end,
-		[6] = function(cpu)
+		[5] = function(cpu)
 			cpu.read = true
 			cpu.adr = cpu.pc
 			cpu.tcu = 0
@@ -981,10 +1152,10 @@ Cpu6502.instructions = {
 	[0x9D] = {
 		op = "STA",
 		[1] = generic_abs_x_cycle1,
-		[2] = generic_abs_x_cycle2,
+		[2] = store_abs_x_cycle2,
 		[3] = function(cpu)
-			cpu.read = false
 			cpu.adr = cpu.ABS_X_PCH + cpu.ABS_X_PCL + cpu.x
+			cpu.read = false
 			cpu.data = cpu.a
 			cpu.tcu = 4
 		end,
@@ -993,7 +1164,7 @@ Cpu6502.instructions = {
 			cpu.adr = cpu.pc
 			cpu.tcu = 0
 		end,
-		[0] = prepare_next_op,
+		[0] = prepare_next_op
 	},
 
 	-- 0xA0: LDY (immediate)
@@ -1003,7 +1174,23 @@ Cpu6502.instructions = {
 		[0] = prepare_next_op,
 	},
 
-
+	-- 0xA1: LDA (X-indexed, indirect)
+	[0xA1] = {
+		op = "LDA",
+		[1] = generic_x_ind_cycle1,
+		[2] = generic_x_ind_cycle2,
+		[3] = generic_x_ind_cycle3,
+		[4] = function(cpu)
+			cpu.adr = (cpu.data << 8) + cpu.LOW
+			cpu.tcu = 5
+		end,
+		[5] = function(cpu)
+			cpu.a = cpu:exec_load(cpu.data)
+			cpu.adr = cpu.pc
+			cpu.tcu = 0
+		end,
+		[0] = prepare_next_op
+	},
 
 	-- 0xA2: LDX (immediate)
 	[0xA2] = {
@@ -1072,7 +1259,7 @@ Cpu6502.instructions = {
 		op = "LDA",
 		[1] = generic_ind_y_cycle1,
 		[2] = generic_ind_y_cycle2,
-		[3] = generic_ind_y_cycle3,
+		[3] = load_ind_y_cycle3,
 		[4] = generic_ind_y_cycle4,
 		[5] = function(cpu)
 			cpu.a = cpu:exec_load(cpu.data)
@@ -1142,7 +1329,8 @@ Cpu6502.instructions = {
 		op = "LDA",
 		[1] = generic_abs_y_cycle1,
 		[2] = generic_abs_y_cycle2,
-		[3] = function(cpu)
+		[3] = generic_abs_y_cycle3,
+		[4] = function(cpu)
 			cpu.a = cpu:exec_load(cpu.data)
 			cpu.adr = cpu.pc
 			cpu.tcu = 0
@@ -1166,16 +1354,7 @@ Cpu6502.instructions = {
 	[0xBC] = {
 		op = "LDY",
 		[1] = generic_abs_x_cycle1,
-		[2] = function(cpu)
-			cpu.pc = cpu.pc + 1
-			cpu.ABS_X_PCH = cpu.data << 8
-			cpu.adr = cpu.ABS_X_PCH + ((cpu.ABS_X_PCL + cpu.x) & 0xff)
-			if cpu.ABS_X_PCL + cpu.x > 0xFF then
-				cpu.tcu = 3
-			else
-				cpu.tcu = 4
-			end
-		end,
+		[2] = load_abs_x_cycle2,
 		[3] = function(cpu)
 			cpu.adr = cpu.ABS_X_PCH + cpu.ABS_X_PCL + cpu.x
 			cpu.tcu = 4
@@ -1193,8 +1372,12 @@ Cpu6502.instructions = {
 	[0xBD] = {
 		op = "LDA",
 		[1] = generic_abs_x_cycle1,
-		[2] = generic_abs_x_cycle2,
+		[2] = load_abs_x_cycle2,
 		[3] = function(cpu)
+			cpu.adr = cpu.ABS_X_PCH + cpu.ABS_X_PCL + cpu.x
+			cpu.tcu = 4
+		end,
+		[4] = function(cpu)
 			cpu.a = cpu:exec_load(cpu.data)
 			cpu.adr = cpu.pc
 			cpu.tcu = 0
@@ -1246,6 +1429,27 @@ Cpu6502.instructions = {
 		end
 	},
 
+	-- 0xC1: CMP (X-indexed, indirect)
+	[0xC1] = {
+		op = "CMP",
+		[1] = generic_x_ind_cycle1,
+		[2] = generic_x_ind_cycle2,
+		[3] = generic_x_ind_cycle3,
+		[4] = function(cpu)
+			cpu.adr = (cpu.data << 8) + cpu.LOW
+			cpu.tcu = 5
+		end,
+		[5] = function(cpu)
+			cpu.TMP = cpu.data
+			cpu.adr = cpu.pc
+			cpu.tcu = 0
+		end,
+		[0] = function(cpu)
+			cpu:exec_sub(cpu.a, cpu.TMP)
+			prepare_next_op(cpu)
+		end,
+	},
+
 	-- 0xC4: CMP (zero-page)
 	[0xC4] = cmp_zp_op("CPY", get_y),
 
@@ -1283,7 +1487,8 @@ Cpu6502.instructions = {
 		op = "CMP",
 		[1] = generic_abs_y_cycle1,
 		[2] = generic_abs_y_cycle2,
-		[3] = function(cpu)
+		[3] = generic_abs_y_cycle3,
+		[4] = function(cpu)
 			cpu.CMP_DATA = cpu.data
 			cpu.adr = cpu.pc
 			cpu.tcu = 0
@@ -1298,8 +1503,12 @@ Cpu6502.instructions = {
 	[0xDD] = {
 		op = "CMP",
 		[1] = generic_abs_x_cycle1,
-		[2] = generic_abs_x_cycle2,
+		[2] = load_abs_x_cycle2,
 		[3] = function(cpu)
+			cpu.adr = cpu.ABS_X_PCH + cpu.ABS_X_PCL + cpu.x
+			cpu.tcu = 4
+		end,
+		[4] = function(cpu)
 			cpu.CMP_DATA = cpu.data
 			cpu.adr = cpu.pc
 			cpu.tcu = 0
@@ -1377,7 +1586,7 @@ Cpu6502.instructions = {
 		op = "CMP",
 		[1] = generic_ind_y_cycle1,
 		[2] = generic_ind_y_cycle2,
-		[3] = generic_ind_y_cycle3,
+		[3] = load_ind_y_cycle3,
 		[4] = generic_ind_y_cycle4,
 		[5] = function(cpu)
 			cpu.TMPBUF = cpu.data
