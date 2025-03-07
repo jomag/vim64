@@ -35,6 +35,42 @@ local function run_test(cycles)
 	end
 end
 
+local function run_test_until_address_reached(rom_path, target_adr)
+	local cpu = Cpu6502:new()
+	local mem = TestMachineMemoryMapper:new()
+	mem:load(rom_path, 0)
+
+	local prev_adr = -1
+	local trap_count = 0
+	local function detect_trap(cpu)
+		if cpu.tcu == 0 then
+			if cpu.pc == prev_adr then
+				trap_count = trap_count + 1
+				return trap_count > 1000
+			else
+				trap_count = 0
+				prev_adr = cpu.pc
+				return false
+			end
+		else
+			return false
+		end
+	end
+
+	cpu:reset_sequence(mem, 0x400)
+	while cpu.pc ~= target_adr do
+		if detect_trap(cpu) then
+			printf("Trapped at 0x%04X\n", cpu.pc)
+			break
+		end
+
+		cpu:step(mem)
+		if cpu.cycle % 1000000 == 0 then
+			printf("Cycle %d, PC: %04x\n", cpu.cycle, cpu.pc)
+		end
+	end
+end
+
 local function run_test_with_validation(rom_path, expect_path, cycles)
 	local cmp_list = { "pc", "ir", "a", "x", "y", "adr", "rnw", "p", "sp", "data" }
 	local expect_file = io.open(expect_path, "r")
@@ -133,9 +169,12 @@ local function run_test_with_validation(rom_path, expect_path, cycles)
 	end
 end
 
+run_test_until_address_reached("6502_functional_test.bin", 0x3469)
 
--- run_test(10)
-run_test_with_validation(
-	"6502_functional_test.bin",
-	"6502_functional_test.perfect6502"
-)
+if false then
+	-- run_test(10)
+	run_test_with_validation(
+		"6502_functional_test.bin",
+		"6502_functional_test.perfect6502"
+	)
+end

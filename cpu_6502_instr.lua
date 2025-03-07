@@ -65,7 +65,6 @@ end
 local function store_abs_x_cycle2(cpu)
 	cpu.pc = cpu.pc + 1
 	cpu.ABS_X_PCH = cpu.data << 8
-	printf("Bukild add ffrom %x, %x, %x\n", cpu.ABS_X_PCH, cpu.ABS_X_PCL, cpu.x)
 	cpu.adr = (cpu.ABS_X_PCH) + ((cpu.ABS_X_PCL + cpu.x) & 0xFF)
 	cpu.tcu = 3
 end
@@ -75,6 +74,17 @@ local function load_abs_x_cycle2(cpu)
 	cpu.ABS_X_PCH = cpu.data << 8
 	cpu.adr = cpu.ABS_X_PCH + ((cpu.ABS_X_PCL + cpu.x) & 0xff)
 	if cpu.ABS_X_PCL + cpu.x > 0xFF then
+		cpu.tcu = 3
+	else
+		cpu.tcu = 4
+	end
+end
+
+local function load_abs_y_cycle2(cpu)
+	cpu.pc = cpu.pc + 1
+	cpu.ABS_Y_PCH = cpu.data << 8
+	cpu.adr = cpu.ABS_Y_PCH + ((cpu.ABS_Y_PCL + cpu.y) & 0xff)
+	if cpu.ABS_Y_PCL + cpu.y > 0xFF then
 		cpu.tcu = 3
 	else
 		cpu.tcu = 4
@@ -162,6 +172,367 @@ end
 local function bitop_cycle0(cpu)
 	cpu.p.z = cpu.TMP & cpu.a == 0
 	prepare_next_op(cpu)
+end
+
+
+local function rd_zp_op(name, prep_cb, process_cb)
+	return {
+		op = name,
+		[1] = function(cpu)
+			cpu.adr = cpu.data
+			cpu.pc = cpu.pc + 1
+			cpu.tcu = 2
+		end,
+		[2] = function(cpu)
+			cpu.adr = cpu.pc
+			cpu.TMP = cpu.data
+			if prep_cb then
+				prep_cb(cpu, cpu.data)
+			end
+			cpu.tcu = 0
+		end,
+		[0] = function(cpu)
+			cpu.a = process_cb(cpu, cpu.TMP)
+			prepare_next_op(cpu)
+		end
+	}
+end
+
+-- Read-Modify-Write operation on zero-page
+-- Most (all?) operations do some status flag update,
+-- which is done through the prep callback in cycle 2.
+-- Operations: ASL, LSR, ROL, ROR
+local function rmw_zp_op(name, prep_cb, process_cb)
+	return {
+		op = name,
+		[1] = function(cpu)
+			cpu.adr = cpu.data
+			cpu.pc = cpu.pc + 1
+			cpu.tcu = 2
+		end,
+		[2] = function(cpu)
+			cpu.RMW_ZP_TMP = cpu.data
+			if prep_cb then
+				prep_cb(cpu, cpu.data)
+			end
+			cpu.read = false
+			cpu.tcu = 3
+		end,
+		[3] = function(cpu)
+			cpu.data = process_cb(cpu, cpu.RMW_ZP_TMP)
+			cpu.tcu = 4
+		end,
+		[4] = function(cpu)
+			cpu.read = true
+			cpu.adr = cpu.pc
+			cpu.tcu = 0
+		end,
+		[0] = prepare_next_op
+	}
+end
+
+local function rd_zp_x_op(name, prep_cb, process_cb)
+	return {
+		op = name,
+		[1] = function(cpu)
+			cpu.adr = cpu.data
+			cpu.pc = cpu.pc + 1
+			cpu.tcu = 2
+		end,
+		[2] = function(cpu)
+			cpu.adr = cpu.adr + cpu.x
+			cpu.tcu = 3
+		end,
+		[3] = function(cpu)
+			cpu.TMP = cpu.data
+			if prep_cb then
+				prep_cb(cpu, cpu.data)
+			end
+			cpu.adr = cpu.pc
+			cpu.tcu = 0
+		end,
+		[0] = function(cpu)
+			cpu.a = process_cb(cpu, cpu.TMP)
+			prepare_next_op(cpu)
+		end,
+	}
+end
+
+-- Read-Modify-Write operation on zero-page, X-indexed
+-- Most (all?) operations do some status flag update,
+-- which is done through the prep callback in cycle 2.
+-- Operations: ASL, LSR, ROL, ROR
+local function rmw_zp_x_op(name, prep_cb, process_cb)
+	return {
+		op = name,
+		[1] = function(cpu)
+			cpu.adr = cpu.data
+			cpu.pc = cpu.pc + 1
+			cpu.tcu = 2
+		end,
+		[2] = function(cpu)
+			cpu.adr = cpu.adr + cpu.x
+			cpu.tcu = 3
+		end,
+		[3] = function(cpu)
+			cpu.RMW_ZP_TMP = cpu.data
+			if prep_cb then
+				prep_cb(cpu, cpu.data)
+			end
+			cpu.read = false
+			cpu.tcu = 4
+		end,
+		[4] = function(cpu)
+			cpu.data = process_cb(cpu, cpu.RMW_ZP_TMP)
+			cpu.tcu = 5
+		end,
+		[5] = function(cpu)
+			cpu.read = true
+			cpu.adr = cpu.pc
+			cpu.tcu = 0
+		end,
+		[0] = prepare_next_op
+	}
+end
+
+local function rd_abs_op(name, prep_cb, process_cb)
+	return {
+		op = name,
+		[1] = generic_abs_cycle1,
+		[2] = function(cpu)
+			cpu.pc = cpu.pc + 1
+			cpu.adr = (cpu.data << 8) | cpu.LOW_BYTE
+			cpu.tcu = 3
+		end,
+		[3] = function(cpu)
+			cpu.TMP = cpu.data
+			if prep_cb then
+				prep_cb(cpu, cpu.data)
+			end
+			cpu.adr = cpu.pc
+			cpu.tcu = 0
+		end,
+		[0] = function(cpu)
+			cpu.a = process_cb(cpu, cpu.TMP)
+			prepare_next_op(cpu)
+		end,
+	}
+end
+
+-- X-indexed, indirect
+local function rd_x_ind_op(name, prep_cb, process_cb)
+	return {
+		op = name,
+		[1] = generic_x_ind_cycle1,
+		[2] = generic_x_ind_cycle2,
+		[3] = generic_x_ind_cycle3,
+		[4] = function(cpu)
+			cpu.adr = (cpu.data << 8) + cpu.LOW
+			cpu.tcu = 5
+		end,
+		[5] = function(cpu)
+			cpu.TMP = cpu.data
+			if prep_cb then
+				prep_cb(cpu, cpu.data)
+			end
+			cpu.adr = cpu.pc
+			cpu.tcu = 0
+		end,
+		[0] = function(cpu)
+			cpu.a = process_cb(cpu, cpu.TMP)
+			prepare_next_op(cpu)
+		end
+	}
+end
+
+-- inderect, Y-indexed
+local function rd_ind_y_op(name, prep_cb, process_cb)
+	return {
+		op = name,
+		[1] = generic_ind_y_cycle1,
+		[2] = generic_ind_y_cycle2,
+		[3] = load_ind_y_cycle3,
+		[4] = function(cpu)
+			cpu.adr = cpu.FINAL_ADR
+			cpu.tcu = 5
+		end,
+		[5] = function(cpu)
+			cpu.TMP = cpu.data
+			if prep_cb then
+				prep_cb(cpu, cpu.data)
+			end
+			cpu.adr = cpu.pc
+			cpu.tcu = 0
+		end,
+		[0] = function(cpu)
+			cpu.a = process_cb(cpu, cpu.TMP)
+			prepare_next_op(cpu)
+		end
+	}
+end
+
+
+local function rd_abs_x_op(name, prep_cb, process_cb)
+	return {
+		op = name,
+		[1] = generic_abs_x_cycle1,
+		[2] = load_abs_x_cycle2,
+		[3] = function(cpu)
+			cpu.adr = cpu.ABS_X_PCH + (cpu.ABS_X_PCL + cpu.x)
+			cpu.tcu = 4
+		end,
+		[4] = function(cpu)
+			cpu.TMP = cpu.data
+			if prep_cb then
+				prep_cb(cpu, cpu.data)
+			end
+			cpu.adr = cpu.pc
+			cpu.tcu = 0
+		end,
+		[0] = function(cpu)
+			cpu.a = process_cb(cpu, cpu.TMP)
+			prepare_next_op(cpu)
+		end,
+	}
+end
+
+local function rd_abs_y_op(name, prep_cb, process_cb)
+	return {
+		op = name,
+		[1] = generic_abs_y_cycle1,
+		[2] = load_abs_y_cycle2,
+		[3] = function(cpu)
+			cpu.adr = cpu.ABS_Y_PCH + (cpu.ABS_Y_PCL + cpu.y)
+			cpu.tcu = 4
+		end,
+		[4] = function(cpu)
+			cpu.TMP = cpu.data
+			if prep_cb then
+				prep_cb(cpu, cpu.data)
+			end
+			cpu.adr = cpu.pc
+			cpu.tcu = 0
+		end,
+		[0] = function(cpu)
+			cpu.a = process_cb(cpu, cpu.TMP)
+			prepare_next_op(cpu)
+		end,
+	}
+end
+
+-- Read-Modify-Write operation with absolute addressing
+-- Most (all?) operations do some status flag update,
+-- which is done through the prep callback in cycle 3.
+-- Operations: ASL, LSR, ROL, ROR
+local function rmw_abs_op(name, prep_cb, process_cb)
+	return {
+		op = name,
+		[1] = generic_abs_cycle1,
+		[2] = function(cpu)
+			cpu.pc = cpu.pc + 1
+			cpu.adr = (cpu.data << 8) | cpu.LOW_BYTE
+			cpu.tcu = 3
+		end,
+		[3] = function(cpu)
+			if prep_cb then
+				prep_cb(cpu, cpu.data)
+			end
+			cpu.read = false
+			cpu.tcu = 4
+		end,
+		[4] = function(cpu)
+			cpu.data = process_cb(cpu, cpu.data)
+			cpu.tcu = 5
+		end,
+		[5] = function(cpu)
+			cpu.read = true
+			cpu.adr = cpu.pc
+			cpu.tcu = 0
+		end,
+		[0] = prepare_next_op
+	}
+end
+
+-- Read-Modify-Write operation with absolute, X-indexed addresing
+-- Most (all?) operations do some status flag update,
+-- which is done through the prep callback in cycle 3.
+-- Operations: ASL, LSR, ROL, ROR
+local function rmw_abs_x_op(name, prep_cb, process_cb)
+	return {
+		op = name,
+		[1] = generic_abs_cycle1,
+		[2] = function(cpu)
+			cpu.pc = cpu.pc + 1
+			cpu.HIGH_BYTE = cpu.data << 8
+			cpu.adr = cpu.HIGH_BYTE | (cpu.LOW_BYTE + cpu.x)
+			cpu.tcu = 3
+		end,
+		[3] = function(cpu)
+			cpu.adr = cpu.HIGH_BYTE + cpu.LOW_BYTE + cpu.x
+			cpu.tcu = 4
+		end,
+		[4] = function(cpu)
+			if prep_cb then
+				prep_cb(cpu, cpu.data)
+			end
+			cpu.read = false
+			cpu.tcu = 5
+		end,
+		[5] = function(cpu)
+			cpu.data = process_cb(cpu, cpu.data)
+			cpu.tcu = 6
+		end,
+		[6] = function(cpu)
+			cpu.read = true
+			cpu.adr = cpu.pc
+			cpu.tcu = 0
+		end,
+		[0] = prepare_next_op
+	}
+end
+
+
+-- Read-Modify-Write operation performed on accumulator.
+-- Most (all?) operations do some status flag update,
+-- which is done through the prep callback in cycle 3.
+-- Operations: ASL, LSR, ROL, ROR
+local function rmw_impl_op(name, prep_cb, process_cb)
+	return {
+		op = name,
+		[1] = function(cpu)
+			if prep_cb then
+				prep_cb(cpu, cpu.a)
+			end
+			cpu.tcu = 0
+		end,
+		[0] = function(cpu)
+			cpu.a = process_cb(cpu, cpu.a)
+			prepare_next_op(cpu)
+		end
+	}
+end
+
+-- Read-Modify-Write operation performed on value after op byte.
+-- Most (all?) operations do some status flag update,
+-- which is done through the prep callback in cycle 3.
+-- Operations: ASL, LSR, ROL, ROR
+local function rmw_immediate_op(name, prep_cb, process_cb)
+	return {
+		op = name,
+		[1] = function(cpu)
+			cpu.pc = cpu.pc + 1
+			cpu.adr = cpu.pc
+			cpu.TMP = cpu.data
+			if prep_cb then
+				prep_cb(cpu, cpu.data)
+			end
+			cpu.tcu = 0
+		end,
+		[0] = function(cpu)
+			cpu.a = process_cb(cpu, cpu.TMP)
+			prepare_next_op(cpu)
+		end
+	}
 end
 
 
@@ -365,7 +736,7 @@ end
 
 local function cmp_zp_op(name, value_cb)
 	return {
-		op = "CMP",
+		op = name,
 		[1] = read_zp_cycle1,
 		[2] = function(cpu)
 			cpu.CMP_ZP_TMP = cpu.data
@@ -381,7 +752,7 @@ end
 
 local function cmp_abs_op(name, value_cb)
 	return {
-		op = "CMP",
+		op = name,
 		[1] = generic_abs_cycle1,
 		[2] = function(cpu)
 			cpu.pc = cpu.pc + 1
@@ -400,6 +771,172 @@ local function cmp_abs_op(name, value_cb)
 	}
 end
 
+local function asl_op(addr_fun)
+	return addr_fun(
+		"ASL",
+		nil,
+		function(cpu, val)
+			cpu.p.c = (val << 1) > 0xFF
+			return cpu:exec_load((val << 1) & 0xFF)
+		end
+	)
+end
+
+local function lsr_op(addr_fun)
+	return addr_fun(
+		"LSR",
+		function(cpu, val)
+			cpu.p.c = val & 1 ~= 0
+		end,
+		function(cpu, val)
+			return cpu:exec_load(val >> 1)
+		end
+	)
+end
+
+local function rol_op(addr_fun)
+	return addr_fun(
+		"ROL",
+		nil,
+		function(cpu, val)
+			local c = val & 128 ~= 0
+			val = (val << 1) & 0xFF
+			if cpu.p.c then
+				val = val | 1
+			end
+			cpu.p.c = c
+			cpu:exec_load(val)
+			return val
+		end
+	)
+end
+
+local function ror_op(addr_fun)
+	return addr_fun(
+		"ROR",
+		function(cpu, val)
+			cpu.TMP_C = cpu.p.c
+			cpu.p.c = val & 1 ~= 0
+		end,
+		function(cpu, val)
+			val = (val >> 1) & 0xFF
+			if cpu.TMP_C then
+				val = val | 128
+			end
+			cpu:exec_load(val)
+			return val
+		end
+	)
+end
+
+local function inc_op(addr_fun)
+	return addr_fun(
+		"INC",
+		nil,
+		function(cpu, val)
+			return cpu:exec_load((val + 1) & 0xFF)
+		end
+	)
+end
+
+local function dec_op(addr_fun)
+	return addr_fun(
+		"DEC",
+		nil,
+		function(cpu, val)
+			return cpu:exec_load((val - 1) & 0xFF)
+		end
+	)
+end
+
+local function and_op(addr_fun)
+	return addr_fun(
+		"AND",
+		function(cpu, val)
+			cpu.p.n = val & 128 ~= 0
+			cpu.p.z = val == 0
+		end,
+		function(cpu, val)
+			return cpu:exec_load(cpu.a & val)
+		end
+	)
+end
+
+local function ora_op(addr_fun)
+	return addr_fun(
+		"OR",
+		nil,
+		function(cpu, val)
+			return cpu:exec_load(cpu.a | val)
+		end
+	)
+end
+
+local function eor_op(addr_fun)
+	return addr_fun(
+		"EOR",
+		nil,
+		function(cpu, val)
+			return cpu:exec_load(cpu.a ~ val)
+		end
+	)
+end
+
+local function adc_op(addr_fun)
+	return addr_fun(
+		"ADC",
+		nil,
+		function(cpu, val)
+			local sum = cpu.a + val
+			if cpu.p.c then
+				sum = sum + 1
+			end
+
+			if sum > 0xFF then
+				cpu.p.c = true
+				sum = sum & 0xFF
+			else
+				cpu.p.c = false
+			end
+
+			cpu.p.o = (~(cpu.a ~ val) & (cpu.a ~ sum) & 0x80) ~= 0
+			cpu.p.n = (sum & 0x80) ~= 0
+			cpu.p.z = sum == 0
+			return sum
+		end
+	)
+end
+
+local function sbc_op(addr_fun)
+	return addr_fun(
+		"SBC",
+		nil,
+		function(cpu, val)
+			-- Through some magic, SBC implementation is identical
+			-- to ADC, except that the value is inverted first
+			val = ~val & 0xFF
+
+			local sum = cpu.a + val
+			if cpu.p.c then
+				sum = sum + 1
+			end
+
+			if sum > 0xFF then
+				cpu.p.c = true
+				sum = sum & 0xFF
+			else
+				cpu.p.c = false
+			end
+
+			cpu.p.o = (~(cpu.a ~ val) & (cpu.a ~ sum) & 0x80) ~= 0
+			cpu.p.n = (sum & 0x80) ~= 0
+			cpu.p.z = sum == 0
+			return sum
+		end
+	)
+end
+
+
 
 local function set_a(cpu, val) cpu.a = val end
 local function set_x(cpu, val) cpu.x = val end
@@ -413,7 +950,6 @@ local function nop_tcu0(cpu)
 end
 
 local function store_data_in_a(cpu)
-	print("store_data_in_a")
 	cpu.a = cpu.data
 	update_flags(cpu, cpu.a)
 	cpu.pc = cpu.pc + 1
@@ -633,40 +1169,19 @@ Cpu6502.instructions = {
 		[0] = prepare_next_op,
 	},
 
-
-	-- 0x08: PHP
-	-- Push status register onto stack
+	[0x01] = ora_op(rd_x_ind_op),
+	[0x05] = ora_op(rd_zp_op),
+	[0x06] = asl_op(rmw_zp_op),
 	[0x08] = pushop("PHP", function(cpu) return cpu:get_p() | 32 end),
+	[0x09] = ora_op(rmw_immediate_op),
+	[0x0A] = asl_op(rmw_impl_op),
+	[0x0D] = ora_op(rd_abs_op),
+	[0x0E] = asl_op(rmw_abs_op),
 
-	-- 0x09: ORA (immediate)
-	-- Or A with memory
-	[0x09] = {
-		op = "ORA",
-		[1] = function(cpu)
-			-- FIXME: this is obviously not complete! But it passes first tests..
-			cpu.pc = cpu.pc + 1
-			cpu.adr = cpu.pc
-			cpu.tcu = 0
-		end,
-		[0] = prepare_next_op,
-	},
-
-	-- 0x0A: ASL (implied)
-	[0x0A] = {
-		op = "ASL",
-		[1] = function(cpu) cpu.tcu = 0 end,
-		[0] = function(cpu)
-			cpu.p.c = (cpu.a << 1) > 0xFF
-			cpu.a = (cpu.a << 1) & 0xFF
-			cpu:exec_load(cpu.a)
-			prepare_next_op(cpu)
-		end
-	},
-
-	-- 0x10: BPL (relative)
-	-- Branch on plus
-	-- FIIXME: BEQ is the most accurate! Join implementation!
 	[0x10] = branchop("BPL", function(cpu) return not cpu.p.n end),
+	[0x11] = ora_op(rd_ind_y_op),
+	[0x15] = ora_op(rd_zp_x_op),
+	[0x16] = asl_op(rmw_zp_x_op),
 
 	-- 0x18: CLC (implied)
 	-- Clear carry flag
@@ -678,6 +1193,10 @@ Cpu6502.instructions = {
 		end,
 		[0] = prepare_next_op,
 	},
+
+	[0x19] = ora_op(rd_abs_y_op),
+	[0x1D] = ora_op(rd_abs_x_op),
+	[0x1E] = asl_op(rmw_abs_x_op),
 
 	-- 0x20: JSR (absolute)
 	-- Jump to subroutine
@@ -717,6 +1236,8 @@ Cpu6502.instructions = {
 		[0] = prepare_next_op,
 	},
 
+	[0x21] = and_op(rd_x_ind_op),
+
 	-- 0x24: BIT (zero-page)
 	[0x24] = {
 		op = "BIT",
@@ -725,29 +1246,19 @@ Cpu6502.instructions = {
 		[0] = bitop_cycle0,
 	},
 
+	[0x25] = and_op(rd_zp_op),
+	[0x26] = rol_op(rmw_zp_op),
+
 	-- 0x28: PLP (implied)
 	-- Pull status register from stack
 	[0x28] = pull_op("PLP", function(cpu, val)
 		cpu:set_p(val | 16)
 	end),
 
+	[0x29] = and_op(rmw_immediate_op),
+
 	-- 0x2A: ROL (implied)
-	[0x2A] = {
-		op = "ROL",
-		[1] = function(cpu)
-			cpu.tcu = 0
-		end,
-		[0] = function(cpu)
-			local c = cpu.a & 128 ~= 0
-			cpu.a = (cpu.a << 1) & 0xFF
-			if cpu.p.c then
-				cpu.a = cpu.a | 1
-			end
-			cpu.p.c = c
-			cpu:exec_load(cpu.a)
-			prepare_next_op(cpu)
-		end
-	},
+	[0x2A] = rol_op(rmw_impl_op),
 
 	-- 0x2C: BIT (absolute)
 	[0x2C] = {
@@ -758,9 +1269,13 @@ Cpu6502.instructions = {
 		[0] = bitop_cycle0,
 	},
 
-	-- 0x30: BMI (relative)
-	-- Branch on minus
+	[0x2D] = and_op(rd_abs_op),
+	[0x2E] = rol_op(rmw_abs_op),
+
 	[0x30] = branchop("BMI", function(cpu) return cpu.p.n end),
+	[0x31] = and_op(rd_ind_y_op),
+	[0x35] = and_op(rd_zp_x_op),
+	[0x36] = rol_op(rmw_zp_x_op),
 
 	-- 0x38: SEC (implied)
 	-- Set Carry
@@ -772,6 +1287,10 @@ Cpu6502.instructions = {
 		end,
 		[0] = prepare_next_op,
 	},
+
+	[0x39] = and_op(rd_abs_y_op),
+	[0x3D] = and_op(rd_abs_x_op),
+	[0x3E] = rol_op(rmw_abs_x_op),
 
 	-- 0x40: RTI (implied)
 	-- Return from interrupt
@@ -805,6 +1324,10 @@ Cpu6502.instructions = {
 		[0] = prepare_next_op,
 	},
 
+	[0x41] = eor_op(rd_x_ind_op),
+	[0x45] = eor_op(rd_zp_op),
+	[0x46] = lsr_op(rmw_zp_op),
+
 	-- 0x48: PHA (implied)
 	-- Push A to stack
 	[0x48] = pushop("PHA", function(cpu) return cpu.a end),
@@ -830,18 +1353,7 @@ Cpu6502.instructions = {
 	},
 
 	-- 0x4A: LSR (implied)
-	[0x4A] = {
-		op = "LSR",
-		[1] = function(cpu)
-			cpu.p.c = cpu.a & 1 ~= 0
-			cpu.tcu = 0
-		end,
-		[0] = function(cpu)
-			cpu.a = (cpu.a >> 1) & 0xFF
-			cpu:exec_load(cpu.a)
-			prepare_next_op(cpu)
-		end
-	},
+	[0x4A] = lsr_op(rmw_impl_op),
 
 	-- 0x4C: JMP a16 (absolute)
 	[0x4C] = {
@@ -851,8 +1363,28 @@ Cpu6502.instructions = {
 		[0] = prepare_next_op,
 	},
 
-	-- 0x50: BVC
+	[0x4D] = eor_op(rd_abs_op),
+	[0x4E] = lsr_op(rmw_abs_op),
+
 	[0x50] = branchop("BVC", function(cpu) return not cpu.p.o end),
+	[0x51] = eor_op(rd_ind_y_op),
+	[0x55] = eor_op(rd_zp_x_op),
+	[0x56] = lsr_op(rmw_zp_x_op),
+
+	-- 0x58: CLI (implied)
+	-- Clear Interrupt Disable
+	[0x58] = {
+		op = "CLI",
+		[1] = function(cpu)
+			cpu.p.i = false
+			cpu.tcu = 0
+		end,
+		[0] = prepare_next_op,
+	},
+
+	[0x59] = eor_op(rd_abs_y_op),
+	[0x5D] = eor_op(rd_abs_x_op),
+	[0x5E] = lsr_op(rmw_abs_x_op),
 
 	-- 0x60: RTS (implied)
 	-- Return from subroutine
@@ -888,64 +1420,22 @@ Cpu6502.instructions = {
 		[0] = prepare_next_op
 	},
 
-	-- 0x58: CLI (implied)
-	-- Clear Interrupt Disable
-	[0x58] = {
-		op = "CLI",
-		[1] = function(cpu)
-			cpu.p.i = false
-			cpu.tcu = 0
-		end,
-		[0] = prepare_next_op,
-	},
+	[0x61] = adc_op(rd_x_ind_op),
+	[0x65] = adc_op(rd_zp_op),
+	[0x66] = ror_op(rmw_zp_op),
 
 	-- 0x68: PLA (implied)
 	-- Pull A from stack
 	[0x68] = pull_op("PLA", function(cpu, val)
 		cpu.a = val
 		update_flags(cpu, val)
-		print("THE VAL", val)
 		-- if val & 16 then
 		-- cpu.p.b = true
 		-- end
 	end),
 
-	-- 0x69: ADC (immediate)
-	-- Add with carry
-	[0x69] = {
-		op = "ADC",
-		[1] = function(cpu)
-			cpu.pc = cpu.pc + 1
-			cpu.TEMPORARY_ADC_REG = cpu.data
-			cpu.adr = cpu.pc
-			cpu.tcu = 0
-		end,
-		[0] = function(cpu)
-			cpu.a = (cpu.a + cpu.TEMPORARY_ADC_REG) & 255
-			cpu.ir = cpu.data
-			cpu.tcu = 1
-			cpu.pc = cpu.pc + 1
-			cpu.adr = cpu.pc
-		end
-	},
-
-	-- 0x6A: ROR (implied)
-	[0x6A] = {
-		op = "ROR",
-		[1] = function(cpu)
-			cpu.TMP_C = cpu.p.c
-			cpu.p.c = cpu.a & 1 ~= 0
-			cpu.tcu = 0
-		end,
-		[0] = function(cpu)
-			cpu.a = (cpu.a >> 1) & 0xFF
-			if cpu.TMP_C then
-				cpu.a = cpu.a | 128
-			end
-			cpu:exec_load(cpu.a)
-			prepare_next_op(cpu)
-		end
-	},
+	[0x69] = adc_op(rmw_immediate_op),
+	[0x6A] = ror_op(rmw_impl_op),
 
 	-- 0x6C: JMP (indirect)
 	[0x6C] = {
@@ -974,8 +1464,13 @@ Cpu6502.instructions = {
 		[0] = prepare_next_op,
 	},
 
-	-- 0x70: BVS
+	[0x6D] = adc_op(rd_abs_op),
+	[0x6E] = ror_op(rmw_abs_op),
+
 	[0x70] = branchop("BVS", function(cpu) return cpu.p.o end),
+	[0x71] = adc_op(rd_ind_y_op),
+	[0x75] = adc_op(rd_zp_x_op),
+	[0x76] = ror_op(rmw_zp_x_op),
 
 	-- 0x78: SEI
 	-- Set Interrupt Disable Status
@@ -987,6 +1482,10 @@ Cpu6502.instructions = {
 		end,
 		[0] = prepare_next_op,
 	},
+
+	[0x79] = adc_op(rd_abs_y_op),
+	[0x7D] = adc_op(rd_abs_x_op),
+	[0x7E] = ror_op(rmw_abs_x_op),
 
 	-- 0x81: STA (X-indexed, indirect)
 	[0x81] = {
@@ -1450,19 +1949,50 @@ Cpu6502.instructions = {
 		end,
 	},
 
-	-- 0xC4: CMP (zero-page)
 	[0xC4] = cmp_zp_op("CPY", get_y),
-
-	-- 0xC5: CMP (zero-page)
 	[0xC5] = cmp_zp_op("CMP", get_a),
+	[0xC6] = dec_op(rmw_zp_op),
 
-	-- 0xCD: CMP (absolute)
+	[0xC8] = {
+		op = "INY",
+		[1] = function(cpu)
+			cpu.tcu = 0
+		end,
+		[0] = function(cpu)
+			cpu.y = inc_byte(cpu.y)
+			update_flags(cpu, cpu.y)
+			prepare_next_op(cpu)
+		end
+	},
+
+	[0xC9] = {
+		op = "CMP",
+		[1] = function(cpu)
+			cpu.TEMPORARY_FOR_CMP = cpu.data
+			cpu.pc = cpu.pc + 1
+			cpu.adr = cpu.pc
+			cpu.tcu = 0
+		end,
+		[0] = function(cpu)
+			update_flags(cpu, (cpu.a - cpu.TEMPORARY_FOR_CMP) & 0xFF)
+			cpu.p.c = cpu.TEMPORARY_FOR_CMP <= cpu.a
+			prepare_next_op(cpu)
+		end
+	},
+
+	[0xCA] = {
+		op = "DEX",
+		[1] = nop_tcu0,
+		[0] = function(cpu)
+			dec_x(cpu)
+			prepare_next_op(cpu)
+		end
+	},
+
 	[0xCC] = cmp_abs_op("CPY", get_y),
-
-	-- 0xCD: CMP (absolute)
 	[0xCD] = cmp_abs_op("CMP", get_a),
+	[0xCE] = dec_op(rmw_abs_op),
 
-	-- 0xD5: CMP (zero-page, X-indexed)
 	[0xD5] = {
 		op = "CMP",
 		[1] = generic_zp_indexed_cycle1,
@@ -1519,64 +2049,6 @@ Cpu6502.instructions = {
 		end
 	},
 
-	-- 0xE0: CPX (immediate)
-	-- Compare with X
-	[0xE0] = {
-		op = "CPX",
-		[1] = function(cpu)
-			cpu.TEMPORARY_FOR_CMP = cpu.data
-			cpu.pc = cpu.pc + 1
-			cpu.adr = cpu.pc
-			cpu.tcu = 0
-		end,
-		[0] = function(cpu)
-			update_flags(cpu, (cpu.x - cpu.TEMPORARY_FOR_CMP) & 0xFF)
-			cpu.p.c = cpu.TEMPORARY_FOR_CMP <= cpu.x
-			prepare_next_op(cpu)
-		end
-	},
-
-	-- 0xC9: CMP (immediate)
-	-- Compare memory with A
-	[0xC9] = {
-		op = "CMP",
-		[1] = function(cpu)
-			cpu.TEMPORARY_FOR_CMP = cpu.data
-			cpu.pc = cpu.pc + 1
-			cpu.adr = cpu.pc
-			cpu.tcu = 0
-		end,
-		[0] = function(cpu)
-			update_flags(cpu, (cpu.a - cpu.TEMPORARY_FOR_CMP) & 0xFF)
-			cpu.p.c = cpu.TEMPORARY_FOR_CMP <= cpu.a
-			prepare_next_op(cpu)
-		end
-	},
-
-	-- 0xC8: INX (implied)
-	[0xC8] = {
-		op = "INY",
-		[1] = function(cpu)
-			cpu.tcu = 0
-		end,
-		[0] = function(cpu)
-			cpu.y = inc_byte(cpu.y)
-			update_flags(cpu, cpu.y)
-			prepare_next_op(cpu)
-		end
-	},
-
-	-- 0xCA: DEX
-	-- Decrement X
-	[0xCA] = {
-		op = "DEX",
-		[1] = nop_tcu0,
-		[0] = function(cpu)
-			dec_x(cpu)
-			prepare_next_op(cpu)
-		end
-	},
-
 	-- 0xD0: BNE (relative)
 	-- Branch if not equal (Z != 0)
 	[0xD0] = branchop("BNE", function(cpu) return not cpu.p.z end),
@@ -1599,6 +2071,9 @@ Cpu6502.instructions = {
 		end
 	},
 
+	-- 0xD6: DEC (zero-page, X-indexed)
+	[0xD6] = dec_op(rmw_zp_x_op),
+
 	-- 0xD8: CLD
 	-- TODO: Missing implementation
 	[0xD8] = {
@@ -1610,10 +2085,31 @@ Cpu6502.instructions = {
 		[0] = prepare_next_op,
 	},
 
-	-- 0xE4: CPX (zero-page)
-	[0xE4] = cmp_zp_op("CPX", get_x),
+	-- 0xDE: DEC (absolute, X-indexed)
+	[0xDE] = dec_op(rmw_abs_x_op),
 
-	-- 0xE8: INX (implied)
+	-- 0xE0: CPX (immediate)
+	-- Compare with X
+	[0xE0] = {
+		op = "CPX",
+		[1] = function(cpu)
+			cpu.TEMPORARY_FOR_CMP = cpu.data
+			cpu.pc = cpu.pc + 1
+			cpu.adr = cpu.pc
+			cpu.tcu = 0
+		end,
+		[0] = function(cpu)
+			update_flags(cpu, (cpu.x - cpu.TEMPORARY_FOR_CMP) & 0xFF)
+			cpu.p.c = cpu.TEMPORARY_FOR_CMP <= cpu.x
+			prepare_next_op(cpu)
+		end
+	},
+
+	[0xE1] = sbc_op(rd_x_ind_op),
+	[0xE4] = cmp_zp_op("CPX", get_x),
+	[0xE5] = sbc_op(rd_zp_op),
+	[0xE6] = inc_op(rmw_zp_op),
+
 	[0xE8] = {
 		op = "INX",
 		[1] = function(cpu)
@@ -1626,8 +2122,8 @@ Cpu6502.instructions = {
 		end
 	},
 
-	-- 0xEA: NOP (implied)
-	-- No operation
+	[0xE9] = sbc_op(rmw_immediate_op),
+
 	[0xEA] = {
 		op = "NOP",
 		[1] = function(cpu)
@@ -1636,15 +2132,14 @@ Cpu6502.instructions = {
 		[0] = prepare_next_op
 	},
 
-	-- 0xEC: CPX (absolute)
 	[0xEC] = cmp_abs_op("CPX", get_x),
-
-	-- 0xF0: BEQ (relative)
-	-- Branch if equal (Z == 0)
+	[0xED] = sbc_op(rd_abs_op),
+	[0xEE] = inc_op(rmw_abs_op),
 	[0xF0] = branchop("BEQ", function(cpu) return cpu.p.z end),
+	[0xF1] = sbc_op(rd_ind_y_op),
+	[0xF5] = sbc_op(rd_zp_x_op),
+	[0xF6] = inc_op(rmw_zp_x_op),
 
-	-- 0xF8: SED (implied)
-	-- Set decimal
 	[0xF8] = {
 		op = "SED",
 		[1] = function(cpu)
@@ -1653,4 +2148,8 @@ Cpu6502.instructions = {
 		end,
 		[0] = prepare_next_op,
 	},
+
+	[0xF9] = sbc_op(rd_abs_y_op),
+	[0xFD] = sbc_op(rd_abs_x_op),
+	[0xFE] = inc_op(rmw_abs_x_op),
 }

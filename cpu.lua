@@ -160,108 +160,26 @@ function Cpu6502:format_internals()
 end
 
 function Cpu6502:step(mem)
-	print("\n\n--- Step: cycle " .. self.cycle)
+	-- print("\n\n--- Step: cycle " .. self.cycle)
 	self.cycle = self.cycle + 1
 
 	if self.read then
 		self.data = mem:get(self.adr)
-		printf(" - Bus state: adr: %04x, data (read): %02x\n", self.adr, self.data)
+		-- printf(" - Bus state: adr: %04x, data (read): %02x\n", self.adr, self.data)
 	else
-		printf(" - Bus state: adr: %04x, data (write): %02x\n", self.adr, self.data)
+		-- printf(" - Bus state: adr: %04x, data (write): %02x\n", self.adr, self.data)
 		mem:set(self.adr, self.data)
 	end
 
 	local instr = self.instructions[self.ir]
 	if instr == nil then
 		fatal("Unimplemented op: 0x%02x", self.ir)
+		return
 	end
 
-	printf(" - Op execution state: %s, tcu %d\n", instr.op, self.tcu)
+	-- printf(" - Op execution state: %s, tcu %d\n", instr.op, self.tcu)
 
 	instr[self.tcu](self)
-end
-
--- Step a full cycle (two half-cycles)
-function Cpu6502:step_x(mem) -- REMOVEME: stepping function
-	-- that handled a lot of the timing and pc fiddling
-	-- New implementation puts more responsibility on each instruction
-	-- handler.
-	self.cycle = self.cycle + 1
-
-	if self.read then
-		self.data = mem:get(self.adr)
-		printf("New data read from %04x: %02x\n", self.adr, self.data)
-	else
-		printf("Data written to %04x: %02x\n", self.adr, self.data)
-		mem:set(self.adr, self.data)
-	end
-
-	print("  --- TCU " .. tostring(self.tcu) .. " ---")
-
-	if self.tcu == 0 then
-		-- First cycle of next operation, which is
-		-- also the last cycle of previous operation
-		local instr = self.instructions[self.ir]
-
-		instr[self.tcu](self)
-		print("DOING TCU 0 FOR " .. instr.op)
-		if self.read then
-			self.tcu = 1
-			self.adr = self.pc
-			self.ir = self.data
-		else
-			self.tcu = 99
-			self.adr = self.pc
-			self.read = true
-		end
-	elseif self.tcu == 99 then
-		self.pc = self.pc + 1
-		self.adr = self.pc
-		self.ir = self.data
-		self.tcu = 1
-	elseif self.tcu == 1 then
-		-- Second cycle of current operation
-		local instr = self.instructions[self.ir]
-		if instr == nil then
-			fatal("Unsupported instruction: 0x%02x\n", self.ir)
-		end
-		print("DOING TCU 1 FOR " .. instr.op)
-		assert(instr[self.tcu] ~= nil)
-		instr[self.tcu](self)
-		if instr[2] == nil then
-			self.tcu = 0
-		else
-			self.tcu = 2
-		end
-	elseif self.tcu == 2 then
-		-- Third cycle of current operation
-		local instr = self.instructions[self.ir]
-		print("DOING TCU 2 FOR " .. instr.op)
-		if instr == nil then
-			fatal("Unsupported instruction: 0x%02x\n", self.ir)
-		end
-		assert(instr[self.tcu] ~= nil)
-		instr[self.tcu](self)
-		if instr[3] == nil then
-			self.tcu = 0
-		else
-			self.tcu = 3
-		end
-	elseif self.tcu == 3 then
-		-- Fourth cycle of current operation
-		local instr = self.instructions[self.ir]
-		if instr == nil then
-			fatal("Unsupported instruction: 0x%02x\n", self.ir)
-		end
-		assert(instr[self.tcu] ~= nil)
-		instr[self.tcu](self)
-		if instr[4] == nil then
-			self.adr = self.pc
-			self.tcu = 0
-		else
-			self.tcu = 4
-		end
-	end
 end
 
 require "cpu_6502_instr"
