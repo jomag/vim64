@@ -1,16 +1,59 @@
 UNINITIALIZED = "uninitialized"
 
+if not bit then
+	require "compat54"
+end
+
+-- Returns true if bit n in value is set. Zero-based.
+function bit_set(value, n)
+	return bit.band(value, bit.lshift(1, n)) ~= 0
+end
+
+function bit7(value)
+	return bit.band(value, 128) ~= 0
+end
+
+function bit6(value)
+	return bit.band(value, 64) ~= 0
+end
+
+function bit5(value)
+	return bit.band(value, 32) ~= 0
+end
+
+function bit3(value)
+	return bit.band(value, 8) ~= 0
+end
+
+function bit0(value)
+	return bit.band(value, 1) ~= 0
+end
+
+function mask_byte(value)
+	return bit.band(value, 0xFF)
+end
+
+-- Construct a 16 bit word from two bytes
+function word(lo, hi)
+	return bit.bor(lo, bit.lshift(hi, 8))
+end
+
 function inc_byte(b)
-	return (b + 1) & 0xFF
+	return bit.band(b + 1, 0xFF)
 end
 
 function byte_as_i8(b)
 	validate_u8(b)
-	if b & 128 == 0 then
-		return b
-	else
+	if bit7(b) then
 		return -(0x100 - b)
+	else
+		return b
 	end
+end
+
+-- Return the upper byte of 16-bit word
+function upper_byte(w)
+	return bit.band(bit.rshift(w, 8), 0xFF)
 end
 
 function printf(s, ...)
@@ -39,9 +82,9 @@ function base64_decode(enc)
 		local c = inv_alpha[enc:sub(i + 2, i + 2)]
 		local d = inv_alpha[enc:sub(i + 3, i + 3)]
 
-		local x = a | (b & 3) << 6
-		local y = (b >> 2) | (c & 15) << 4
-		local z = (c >> 4) | d << 6
+		local x = bit.bor(a, bit.lshift(bit.band(b, 3), 6))
+		local y = bit.bor(bit.rshift(b, 2), bit.lshift(bit.band(c, 0xF), 4))
+		local z = bit.bor(bit.rshift(c, 4), bit.lshift(d, 6))
 
 		print("x:" .. x)
 		print("y:" .. y)

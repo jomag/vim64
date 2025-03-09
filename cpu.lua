@@ -65,25 +65,45 @@ end
 
 function Cpu6502:get_p()
 	local p = 0
-	p = p | (self.p.n and 128 or 0)
-	p = p | (self.p.o and 64 or 0)
-	p = p | (self.p.ignored_bit and 32 or 0)
-	p = p | (self.p.b and 16 or 0)
-	p = p | (self.p.d and 8 or 0)
-	p = p | (self.p.i and 4 or 0)
-	p = p | (self.p.z and 2 or 0)
-	p = p | (self.p.c and 1 or 0)
+	p = bit.bor(p, self.p.n and 128 or 0)
+	p = bit.bor(p, self.p.o and 64 or 0)
+	p = bit.bor(p, self.p.ignored_bit and 32 or 0)
+	p = bit.bor(p, self.p.b and 16 or 0)
+	p = bit.bor(p, self.p.d and 8 or 0)
+	p = bit.bor(p, self.p.i and 4 or 0)
+	p = bit.bor(p, self.p.z and 2 or 0)
+	p = bit.bor(p, self.p.c and 1 or 0)
+
+	-- Lua5.4:
+	-- p = p | (self.p.n and 128 or 0)
+	-- p = p | (self.p.o and 64 or 0)
+	-- p = p | (self.p.ignored_bit and 32 or 0)
+	-- p = p | (self.p.b and 16 or 0)
+	-- p = p | (self.p.d and 8 or 0)
+	-- p = p | (self.p.i and 4 or 0)
+	-- p = p | (self.p.z and 2 or 0)
+	-- p = p | (self.p.c and 1 or 0)
+
 	return p
 end
 
 function Cpu6502:set_p(v)
-	self.p.n = v & 128 ~= 0
-	self.p.o = v & 64 ~= 0
-	self.p.b = v & 16 ~= 0
-	self.p.d = v & 8 ~= 0
-	self.p.i = v & 4 ~= 0
-	self.p.z = v & 2 ~= 0
-	self.p.c = v & 1 ~= 0
+	self.p.n = bit.band(v, 128) ~= 0
+	self.p.o = bit.band(v, 64) ~= 0
+	self.p.b = bit.band(v, 16) ~= 0
+	self.p.d = bit.band(v, 8) ~= 0
+	self.p.i = bit.band(v, 4) ~= 0
+	self.p.z = bit.band(v, 2) ~= 0
+	self.p.c = bit.band(v, 1) ~= 0
+
+	-- Lua5.4:
+	-- self.p.n = v & 128 ~= 0
+	-- self.p.o = v & 64 ~= 0
+	-- self.p.b = v & 16 ~= 0
+	-- self.p.d = v & 8 ~= 0
+	-- self.p.i = v & 4 ~= 0
+	-- self.p.z = v & 2 ~= 0
+	-- self.p.c = v & 1 ~= 0
 end
 
 -- Perform subtraction and update flags accordingly
@@ -91,14 +111,14 @@ end
 function Cpu6502:exec_sub(o1, o2)
 	self.p.c = o1 >= o2
 	self.p.z = o1 == o2
-	self.p.n = (o1 - o2) & 128 ~= 0
-	return (o1 - o2) & 0xFF
+	self.p.n = bit7(o1 - o2)
+	return bit.band(o1 - o2, 0xFF)
 end
 
 -- Update flags on load
 function Cpu6502:exec_load(v)
 	self.p.z = v == 0
-	self.p.n = v & 128 ~= 0
+	self.p.n = bit7(v)
 	return v
 end
 
@@ -115,7 +135,7 @@ function Cpu6502:reset_sequence(mem, force_start_address)
 		validate_u16(force_start_address)
 		self.pc = force_start_address
 	else
-		self.pc = mem:get(0xFFFC) | (mem:get(0xFFFD) << 8)
+		self.pc = mem:get_word(0xFFFFC)
 	end
 	self.sp = 0xBD
 	self.ir = 0

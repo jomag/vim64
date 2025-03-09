@@ -43,24 +43,27 @@ local function run_test_until_address_reached(rom_path, target_adr)
 	local prev_adr = -1
 	local trap_count = 0
 	local function detect_trap(cpu)
-		if cpu.tcu == 0 then
-			if cpu.pc == prev_adr then
+		if cpu.tcu == 1 then
+			local adr = cpu.pc - 1
+			if adr == prev_adr then
 				trap_count = trap_count + 1
-				return trap_count > 1000
+				if trap_count > 1000 then
+					return adr
+				end
 			else
 				trap_count = 0
-				prev_adr = cpu.pc
+				prev_adr = adr
 				return false
 			end
-		else
-			return false
 		end
+		return false
 	end
 
 	cpu:reset_sequence(mem, 0x400)
 	while cpu.pc ~= target_adr do
-		if detect_trap(cpu) then
-			printf("Trapped at 0x%04X\n", cpu.pc)
+		local trapped = detect_trap(cpu)
+		if trapped ~= false then
+			printf("Trapped at 0x%04X\n", trapped)
 			break
 		end
 
@@ -92,7 +95,11 @@ local function run_test_with_validation(rom_path, expect_path, cycles)
 			elseif k == "d" then
 				k = "data"
 			end
-			state[k] = tonumber(v, 16)
+			if k == "halfcyc" then
+				state[k] = tonumber(v, 10)
+			else
+				state[k] = tonumber(v, 16)
+			end
 		end
 
 		-- Hack: skip every second half cycle
@@ -109,7 +116,7 @@ local function run_test_with_validation(rom_path, expect_path, cycles)
 		end
 		local s = ""
 		for i = 0, 7 do
-			s = s .. (i > 0 and sep or "") .. ((byte & (1 << (7 - i)) == 0) and 0 or 1)
+			s = s .. (i > 0 and sep or "") .. (bit_set(byte, (7 - i)) and 1 or 0)
 		end
 		return s
 	end
@@ -132,6 +139,7 @@ local function run_test_with_validation(rom_path, expect_path, cycles)
 			else
 				b = cpu[cmp]
 			end
+
 			if a ~= b then
 				printf("Found a difference in register '%s':\n", cmp)
 				if cmp == "p" then
@@ -152,13 +160,23 @@ local function run_test_with_validation(rom_path, expect_path, cycles)
 
 	cpu:reset_sequence(mem, 0x400)
 	while cycles == nil or cpu.cycle < cycles do
-		print(cpu:format_state() .. " " .. cpu:format_internals())
 		local exp, exp_line = next_expected_state()
 		if exp == nil then
 			print("End of expected cycles. Success!")
 			break
 		end
+
+		if exp.halfcyc > cpu.cycle * 2 + 1 then
+			printf("Fast forwarding to cycle %d...\n", exp.halfcyc / 2)
+			while exp.halfcyc > cpu.cycle * 2 + 1 do
+				cpu:step(mem)
+			end
+		end
+
+		print(tostring(cpu.cycle) .. ": " .. cpu:format_state() .. " " .. cpu:format_internals())
+
 		if not compare_states(cpu, mem, exp, exp_line) then
+			print("wtf?", cpu:get_p(), cpu.p.c, bit.bor(0, cpu.p.c and 1 or 0))
 			print("Test failed.")
 			printf("%d/151 instructions implemented\n", get_key_count(Cpu6502.instructions))
 			break
@@ -169,12 +187,13 @@ local function run_test_with_validation(rom_path, expect_path, cycles)
 	end
 end
 
-run_test_until_address_reached("6502_functional_test.bin", 0x3469)
-
-if false then
-	-- run_test(10)
+if true then
+	run_test_until_address_reached("6502_functional_test.bin", 0x1113477)
+else
 	run_test_with_validation(
 		"6502_functional_test.bin",
-		"6502_functional_test.perfect6502"
+		"decimal_tests.txt"
+	-- "100M.txt"
+	-- "6502_functional_test.perfect6502"
 	)
 end

@@ -22,6 +22,10 @@ function MemoryMapper:get(adr)
 	return self.ram[adr]
 end
 
+function MemoryMapper:get_word(adr)
+	return bit.bor(self:get(adr), bit.lshift(self:get(adr + 1), 8))
+end
+
 function MemoryMapper:get_wo_sideffects(adr)
 	validate_u16(adr)
 	return self.ram[adr]
