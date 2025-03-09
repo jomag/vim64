@@ -46,9 +46,9 @@ Cpu6502 = {
 
 	-- Equivalent to the read/write pin
 	-- If true, the next half cycle will read from
-	-- from bus into "data" (mem:get()).
+	-- from bus into "data" (bus:get()).
 	-- If false, the next half cycle will write
-	-- "data" to bus (mem:set()).
+	-- "data" to bus (bus:set()).
 	read = true,
 
 	-- Bus address pins
@@ -73,17 +73,6 @@ function Cpu6502:get_p()
 	p = bit.bor(p, self.p.i and 4 or 0)
 	p = bit.bor(p, self.p.z and 2 or 0)
 	p = bit.bor(p, self.p.c and 1 or 0)
-
-	-- Lua5.4:
-	-- p = p | (self.p.n and 128 or 0)
-	-- p = p | (self.p.o and 64 or 0)
-	-- p = p | (self.p.ignored_bit and 32 or 0)
-	-- p = p | (self.p.b and 16 or 0)
-	-- p = p | (self.p.d and 8 or 0)
-	-- p = p | (self.p.i and 4 or 0)
-	-- p = p | (self.p.z and 2 or 0)
-	-- p = p | (self.p.c and 1 or 0)
-
 	return p
 end
 
@@ -95,15 +84,6 @@ function Cpu6502:set_p(v)
 	self.p.i = bit.band(v, 4) ~= 0
 	self.p.z = bit.band(v, 2) ~= 0
 	self.p.c = bit.band(v, 1) ~= 0
-
-	-- Lua5.4:
-	-- self.p.n = v & 128 ~= 0
-	-- self.p.o = v & 64 ~= 0
-	-- self.p.b = v & 16 ~= 0
-	-- self.p.d = v & 8 ~= 0
-	-- self.p.i = v & 4 ~= 0
-	-- self.p.z = v & 2 ~= 0
-	-- self.p.c = v & 1 ~= 0
 end
 
 -- Perform subtraction and update flags accordingly
@@ -122,7 +102,7 @@ function Cpu6502:exec_load(v)
 	return v
 end
 
-function Cpu6502:reset_sequence(mem, force_start_address)
+function Cpu6502:reset_sequence(bus, force_start_address)
 	-- Reset sequence is not correctly emulated:
 	-- It initializes all registers to their expected values
 	-- after initial X cycles, so that it matches the
@@ -135,7 +115,7 @@ function Cpu6502:reset_sequence(mem, force_start_address)
 		validate_u16(force_start_address)
 		self.pc = force_start_address
 	else
-		self.pc = mem:get_word(0xFFFC)
+		self.pc = bus:get_word(0xFFFC)
 	end
 	self.sp = 0xBD
 	self.ir = 0
@@ -146,7 +126,7 @@ function Cpu6502:reset_sequence(mem, force_start_address)
 
 	self.a = 0
 	self.x = 0xC0
-	self.pd = mem:get(self.pc)
+	self.pd = bus:get(self.pc)
 
 	self.p.z = true
 	self.p.i = true
@@ -179,25 +159,15 @@ function Cpu6502:format_internals()
 		"ADR:%02x DATA:%02x TCU:%d", self.adr, self.data, self.tcu)
 end
 
-function Cpu6502:step(mem)
-	-- print("\n\n--- Step: cycle " .. self.cycle)
+function Cpu6502:step(data)
 	self.cycle = self.cycle + 1
-
-	if self.read then
-		self.data = mem:get(self.adr)
-		-- printf(" - Bus state: adr: %04x, data (read): %02x\n", self.adr, self.data)
-	else
-		-- printf(" - Bus state: adr: %04x, data (write): %02x\n", self.adr, self.data)
-		mem:set(self.adr, self.data)
-	end
+	self.data = data
 
 	local instr = self.instructions[self.ir]
 	if instr == nil then
 		fatal("Unimplemented op: 0x%02x", self.ir)
 		return
 	end
-
-	-- printf(" - Op execution state: %s, tcu %d\n", instr.op, self.tcu)
 
 	instr[self.tcu](self)
 end

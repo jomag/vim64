@@ -1,8 +1,8 @@
-MemoryMapper = {
+Bus = {
 	ram = UNINITIALIZED
 }
 
-function MemoryMapper:new(o)
+function Bus:new(o)
 	o = o or {}
 	o.ram = o.ram or {}
 
@@ -17,26 +17,26 @@ function MemoryMapper:new(o)
 	return o
 end
 
-function MemoryMapper:get(adr)
+function Bus:get(adr)
 	validate_u16(adr)
 	return self.ram[adr]
 end
 
-function MemoryMapper:get_word(adr)
+function Bus:get_word(adr)
 	return bit.bor(self:get(adr), bit.lshift(self:get(adr + 1), 8))
 end
 
-function MemoryMapper:get_wo_sideffects(adr)
+function Bus:get_wo_sideffects(adr)
 	validate_u16(adr)
 	return self.ram[adr]
 end
 
-function MemoryMapper:set(adr, val)
+function Bus:set(adr, val)
 	validate_u8(val)
 	self.ram[adr] = val
 end
 
-function MemoryMapper:pprint(start, len)
+function Bus:pprint(start, len)
 	if len == nil then
 		len = 0x10000 - start
 	end

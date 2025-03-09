@@ -1,17 +1,17 @@
 require "cpu"
-require "mem"
+require "bus"
 
-local TestMachineMemoryMapper = {}
-setmetatable(TestMachineMemoryMapper, { __index = MemoryMapper })
+local TestBus = {}
+setmetatable(TestBus, { __index = Bus })
 
-function TestMachineMemoryMapper:new(o)
-	o = MemoryMapper:new(o or {})
+function TestBus:new(o)
+	o = Bus:new(o or {})
 	setmetatable(o, self)
 	self.__index = self
 	return o
 end
 
-function TestMachineMemoryMapper:load(path, adr)
+function TestBus:load(path, adr)
 	local bin = load_bin(path)
 	if bin == nil then
 		printf("Failed to load %s\n", path)
@@ -25,20 +25,20 @@ end
 
 local function run_test(cycles)
 	local cpu = Cpu6502:new()
-	local mem = TestMachineMemoryMapper:new()
-	mem:load("6502_functional_test.bin", 0)
+	local bus = TestBus:new()
+	bus:load("6502_functional_test.bin", 0)
 
-	cpu:reset_sequence(mem, 0x400)
+	cpu:reset_sequence(bus, 0x400)
 	while cycles == nil or cpu.cycle < cycles do
 		-- print(cpu:format_state() .. " " .. cpu:format_internals())
-		cpu:step(mem)
+		cpu:step(bus)
 	end
 end
 
 local function run_test_until_address_reached(rom_path, target_adr)
 	local cpu = Cpu6502:new()
-	local mem = TestMachineMemoryMapper:new()
-	mem:load(rom_path, 0)
+	local bus = TestBus:new()
+	bus:load(rom_path, 0)
 
 	local prev_adr = -1
 	local trap_count = 0
@@ -59,7 +59,8 @@ local function run_test_until_address_reached(rom_path, target_adr)
 		return false
 	end
 
-	cpu:reset_sequence(mem, 0x400)
+	cpu:reset_sequence(bus, 0x400)
+
 	while cpu.pc ~= target_adr do
 		local trapped = detect_trap(cpu)
 		if trapped ~= false then
@@ -67,7 +68,15 @@ local function run_test_until_address_reached(rom_path, target_adr)
 			break
 		end
 
-		cpu:step(mem)
+		local data
+		if cpu.read then
+			data = bus:get(cpu.adr)
+		else
+			data = cpu.data
+			bus:set(cpu.adr, data)
+		end
+
+		cpu:step(data)
 		if cpu.cycle % 1000000 == 0 then
 			printf("Cycle %d, PC: %04x\n", cpu.cycle, cpu.pc)
 		end
@@ -121,7 +130,7 @@ local function run_test_with_validation(rom_path, expect_path, cycles)
 		return s
 	end
 
-	local function compare_states(cpu, mem, exp, exp_line)
+	local function compare_states(cpu, bus, exp, exp_line)
 		local res = true
 		for _, cmp in ipairs(cmp_list) do
 			local a = exp[cmp]
@@ -132,7 +141,7 @@ local function run_test_with_validation(rom_path, expect_path, cycles)
 				b = cpu:get_p()
 			elseif cmp == "data" then
 				if cpu.read then
-					b = mem:get_wo_sideffects(cpu.adr)
+					b = bus:get_wo_sideffects(cpu.adr)
 				else
 					b = cpu.data
 				end
@@ -155,10 +164,10 @@ local function run_test_with_validation(rom_path, expect_path, cycles)
 	end
 
 	local cpu = Cpu6502:new()
-	local mem = TestMachineMemoryMapper:new()
-	mem:load(rom_path, 0)
+	local bus = TestBus:new()
+	bus:load(rom_path, 0)
 
-	cpu:reset_sequence(mem, 0x400)
+	cpu:reset_sequence(bus, 0x400)
 	while cycles == nil or cpu.cycle < cycles do
 		local exp, exp_line = next_expected_state()
 		if exp == nil then
@@ -169,13 +178,13 @@ local function run_test_with_validation(rom_path, expect_path, cycles)
 		if exp.halfcyc > cpu.cycle * 2 + 1 then
 			printf("Fast forwarding to cycle %d...\n", exp.halfcyc / 2)
 			while exp.halfcyc > cpu.cycle * 2 + 1 do
-				cpu:step(mem)
+				cpu:step(bus)
 			end
 		end
 
 		print(tostring(cpu.cycle) .. ": " .. cpu:format_state() .. " " .. cpu:format_internals())
 
-		if not compare_states(cpu, mem, exp, exp_line) then
+		if not compare_states(cpu, bus, exp, exp_line) then
 			print("wtf?", cpu:get_p(), cpu.p.c, bit.bor(0, cpu.p.c and 1 or 0))
 			print("Test failed.")
 			printf("%d/151 instructions implemented\n", get_key_count(Cpu6502.instructions))
@@ -183,17 +192,17 @@ local function run_test_with_validation(rom_path, expect_path, cycles)
 		end
 
 		print("")
-		cpu:step(mem)
+		cpu:step(bus)
 	end
 end
 
 if true then
-	run_test_until_address_reached("6502_functional_test.bin", 0x1113477)
+	run_test_until_address_reached("simulations/6502_functional_test.bin", 0x1113477)
 else
 	run_test_with_validation(
-		"6502_functional_test.bin",
-		"decimal_tests.txt"
-	-- "100M.txt"
-	-- "6502_functional_test.perfect6502"
+		"simulations/6502_functional_test.bin",
+		"simulations/decimal_tests.txt"
+	-- "simulations/100M.txt"
+	-- "simulations/6502_functional_test.perfect6502"
 	)
 end

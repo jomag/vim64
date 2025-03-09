@@ -1,14 +1,14 @@
-require "mem"
+require "bus"
 
-C64MemoryMapper = {
+BusC64 = {
 	kernal = nil,
 	basic = nil,
 	video = {}
 }
-setmetatable(C64MemoryMapper, { __index = MemoryMapper })
+setmetatable(BusC64, { __index = Bus })
 
-function C64MemoryMapper:new(o)
-	o = MemoryMapper:new(o or {
+function BusC64:new(o)
+	o = Bus:new(o or {
 		kernal = nil,
 		basic = nil,
 		video = nil,
@@ -19,15 +19,15 @@ function C64MemoryMapper:new(o)
 	return o
 end
 
-function C64MemoryMapper:load_kernal_rom(path)
+function BusC64:load_kernal_rom(path)
 	self.kernal = load_bin(path)
 end
 
-function C64MemoryMapper:load_basic_rom(path)
+function BusC64:load_basic_rom(path)
 	self.basic = load_bin(path)
 end
 
-function C64MemoryMapper:load(path, adr)
+function BusC64:load(path, adr)
 	local bin = load_bin(path)
 	if bin == nil then
 		printf("Failed to load %s\n", path)
@@ -39,7 +39,7 @@ function C64MemoryMapper:load(path, adr)
 	end
 end
 
-function C64MemoryMapper:get(adr)
+function BusC64:get(adr)
 	local function notimplemented(msg)
 		local info = ("Not Implemented: %s (@%04X)\n"):format(msg, adr)
 		if self.ignore_unimplemented then
@@ -138,7 +138,7 @@ function C64MemoryMapper:get(adr)
 	fatal(("GET 0x%04x: unimplemented memory range\n"):format(adr))
 end
 
-function C64MemoryMapper:set(adr, val)
+function BusC64:set(adr, val)
 	local function notimplemented(msg)
 		local info = ("Not Implemented: %s (@%04X = %02X)\n"):format(msg, adr, val)
 		if self.ignore_unimplemented then
