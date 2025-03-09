@@ -135,7 +135,7 @@ function Cpu6502:reset_sequence(mem, force_start_address)
 		validate_u16(force_start_address)
 		self.pc = force_start_address
 	else
-		self.pc = mem:get_word(0xFFFFC)
+		self.pc = mem:get_word(0xFFFC)
 	end
 	self.sp = 0xBD
 	self.ir = 0

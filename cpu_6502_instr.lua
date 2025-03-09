@@ -1342,7 +1342,7 @@ Cpu6502.instructions = {
 		[5] = function(cpu)
 			cpu.adr = word(cpu.JSR_PCL, cpu.data)
 			cpu.pc = cpu.adr
-			cpu.sp = cpu.JSR_SP_COPY - 2
+			cpu.sp = mask_byte(cpu.JSR_SP_COPY - 2)
 			cpu.tcu = 0
 		end,
 		[0] = prepare_next_op,

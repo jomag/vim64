@@ -1,5 +1,9 @@
 require "cpu"
 require "utils"
+require "mem_c64"
+require "video"
+require "cia"
+require "sid"
 
 local function memory_mapper_c64()
 	local kernal = load_bin("kernal.901227-03.bin")
@@ -24,55 +28,63 @@ local function memory_mapper_c64()
 	return m
 end
 
-local machine = {
-	mem = memory_mapper_c64(),
-	cpu = Cpu6502:new(),
+local function emulate(machine, cycles)
+	local mem = machine.mem
+	local cpu = machine.cpu
+	local cia1 = machine.cia1
+	local cia2 = machine.cia2
+	local video = machine.video
+	local sid = machine.sid
 
-	-- Emulate 1 clock cycle
-	step = function(self)
-		self.cpu:step(self)
-	end
-}
-
-local function emulate(state, verbose, cycles)
-	print("PC: " .. state.cpu.pc)
 	-- for i = 0xFFF0, 0xFFFF do
 	-- 	printf("%04x: %02x\n", i, machine.mem.get(i))
 	-- end
-	machine.cpu:reset_sequence(machine)
+
+	cpu:reset_sequence(mem)
+
 	while true do
-		if cycles ~= nil and cycles >= state.cpu.cycle then
+		if cycles ~= nil and cycles <= cpu.cycle then
+			print("Done!")
 			break
 		end
 
-		-- printf("Cycle %d, TCU: %d\n", i - 1, machine.cpu.tcu)
-		machine:step()
-		if verbose then
-			print(machine.cpu:format_state(style="visual6502")
-		end
+		-- printf("Cycle %d, TCU: %d\n", cpu.cycle, machine.cpu.tcu)
+		-- printf("%s %s\n", cpu:format_state(), cpu:format_internals())
+		cpu:step(mem)
+		cia1:step()
+		cia2:step()
+		video:step()
 	end
 end
 
--- emulate(machine)
+local machine = {
+	cpu = Cpu6502:new(),
+	mem = C64MemoryMapper:new(),
+	video = VicII:new(),
+	cia1 = CIA:new(),
+	cia2 = CIA:new(),
+	sid = SID:new(),
+}
 
--- Setup testing same as in Visual 6502
-machine.pc = 0
+machine.mem:load_kernal_rom("kernal.901227-03.bin")
+machine.mem:load_basic_rom("basic.901226-01.bin")
+machine.mem.video = machine.video
+machine.mem.cia1 = machine.cia1
+machine.mem.cia2 = machine.cia2
+machine.mem.sid = machine.sid
+emulate(machine, 300000000)
 
--- JMP 0x0190
-machine.ram[0] = 0x4C
-machine.ram[1] = 0x90
-machine.ram[2] = 0x01
+local w = 40
+for y = 0, 20 do
+	for x = 0, w do
+		printf("%s", string.char(machine.mem:get(0x400 + y * w + x)))
+	end
+	printf("\n")
+end
 
--- LDX 0x31
-machine.ram[0x190] = 0xA2
-machine.ram[0x191] = 0x31
-
--- LDX 0x31
-machine.ram[0x192] = 0xA2
-machine.ram[0x193] = 0x46
-
--- ???
-machine.ram[0x194] = 0xAD
-machine.ram[0x195] = 0x70
-
-emulate(machine, true, 10)
+for y = 0, 20 do
+	for x = 0, w do
+		printf("%x ", machine.mem:get(0x400 + y * w + x))
+	end
+	printf("\n")
+end

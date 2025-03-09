@@ -29,6 +29,16 @@ function bit0(value)
 	return bit.band(value, 1) ~= 0
 end
 
+-- Replace upper 8 bits in 16-bit word
+function set_hi_byte(v, hi)
+	return bit.bor(bit.band(v, 0x00FF), bit.lshift(hi, 8))
+end
+
+-- Replace lower 8 bits in 16-bit word
+function set_lo_byte(v, lo)
+	return bit.bor(bit.band(v, 0xFF00), lo)
+end
+
 function mask_byte(value)
 	return bit.band(value, 0xFF)
 end

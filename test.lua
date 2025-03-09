@@ -30,7 +30,7 @@ local function run_test(cycles)
 
 	cpu:reset_sequence(mem, 0x400)
 	while cycles == nil or cpu.cycle < cycles do
-		print(cpu:format_state() .. " " .. cpu:format_internals())
+		-- print(cpu:format_state() .. " " .. cpu:format_internals())
 		cpu:step(mem)
 	end
 end
