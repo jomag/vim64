@@ -12,7 +12,7 @@ function SID:get(adr)
 		end
 	end
 
-	notimplemented()
+	-- notimplemented()
 	return 0
 end
 
@@ -25,7 +25,8 @@ function SID:set(adr, val)
 			fatal(info)
 		end
 	end
-	notimplemented()
+
+	-- notimplemented()
 end
 
 function SID:step()

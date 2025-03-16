@@ -119,17 +119,6 @@ local function run_test_with_validation(rom_path, expect_path, cycles)
 		return state, line
 	end
 
-	local function format_bits(byte, sep)
-		if sep == nil then
-			sep = ""
-		end
-		local s = ""
-		for i = 0, 7 do
-			s = s .. (i > 0 and sep or "") .. (bit_set(byte, (7 - i)) and 1 or 0)
-		end
-		return s
-	end
-
 	local function compare_states(cpu, bus, exp, exp_line)
 		local res = true
 		for _, cmp in ipairs(cmp_list) do

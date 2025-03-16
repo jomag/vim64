@@ -1265,7 +1265,7 @@ Cpu6502.instructions = {
 			cpu.adr = 0xFFFE
 			cpu.read = true
 			cpu.p.i = true
-			cpu.sp = cpu.sp - 3
+			cpu.sp = mask_byte(cpu.sp - 3)
 			cpu.tcu = 5
 		end,
 		[5] = function(cpu)

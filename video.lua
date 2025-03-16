@@ -1,5 +1,8 @@
+VIC_BANK = 0xDD00
+
 VicII = {
 	-- Horizontal raster scroll, screen width, multicolor
+	screen_control_register_1 = 00,
 	screen_control_register_2 = 0xC8,
 	sprite_sprite_collision_reg = 0,
 	sprite_bg_collision_reg = 0,
@@ -130,4 +133,107 @@ function VicII:new(props)
 		[7] = { color = 0 },
 	}
 	return v
+end
+
+-- Returns true if text mode, and false if bitmap mode
+function VicII:is_text_mode()
+	return bit_set(self.screen_control_register_1, 5)
+end
+
+function VicII:get_char_memory_ptr()
+	if not self:is_text_mode() then
+		fatal("can not get char mem offset in bitmap mode")
+	end
+	return bit.lshift(bit.band(self.memory_setup_reg, 0x7), 11)
+end
+
+-- Do a naive render of the whole screen
+-- draw is a function with args: x, y, color
+function VicII:naive_render(draw, bus)
+	-- First fill all borders
+	local c = self.border_color
+	for y = 0, BORDER - 1 do
+		for x = 0, WIDTH - 1 do
+			draw(x, y, c)
+			draw(x, BORDER + 200 + y, c)
+		end
+	end
+
+	for y = BORDER, BORDER + 200 - 1 do
+		for x = 0, BORDER - 1 do
+			draw(x, y, c)
+			draw(BORDER + 320 + x, y, c)
+		end
+	end
+
+	-- 3C ..1111..
+	-- 66 .11..11.
+	-- 6E .11.111.
+	-- 6E .11.111.
+	-- 60 .11.....
+	-- 62 .11...1.
+	-- 3C ..1111..
+
+	local bg = self.background_color
+	-- local char_offset = 0xD000 -- self:get_char_memory_ptr()
+	local char_offset = 0
+	for cy = 0, 24 do
+		for cx = 0, 39 do
+			local fg = bit.band(bus:get(0xD800 + cy * 40 + cx), 0xF)
+			local char = bus:get(0x400 + cy * 40 + cx)
+			local ptr = char_offset + char * 8
+			local x = cx * 8
+			for y = 0, 7 do
+				local row = bus.char[ptr + y]
+
+				if bit_set(row, 7) then
+					draw(x + BORDER, y + BORDER + cy * 8, fg)
+				else
+					draw(x + BORDER, y + BORDER + cy * 8, bg)
+				end
+
+				if bit_set(row, 6) then
+					draw(x + BORDER + 1, y + BORDER + cy * 8, fg)
+				else
+					draw(x + BORDER + 1, y + BORDER + cy * 8, bg)
+				end
+
+				if bit_set(row, 5) then
+					draw(x + BORDER + 2, y + BORDER + cy * 8, fg)
+				else
+					draw(x + BORDER + 2, y + BORDER + cy * 8, bg)
+				end
+
+				if bit_set(row, 4) then
+					draw(x + BORDER + 3, y + BORDER + cy * 8, fg)
+				else
+					draw(x + BORDER + 3, y + BORDER + cy * 8, bg)
+				end
+
+				if bit_set(row, 3) then
+					draw(x + BORDER + 4, y + BORDER + cy * 8, fg)
+				else
+					draw(x + BORDER + 4, y + BORDER + cy * 8, bg)
+				end
+
+				if bit_set(row, 2) then
+					draw(x + BORDER + 5, y + BORDER + cy * 8, fg)
+				else
+					draw(x + BORDER + 5, y + BORDER + cy * 8, bg)
+				end
+
+				if bit_set(row, 1) then
+					draw(x + BORDER + 6, y + BORDER + cy * 8, fg)
+				else
+					draw(x + BORDER + 6, y + BORDER + cy * 8, bg)
+				end
+
+				if bit_set(row, 0) then
+					draw(x + BORDER + 7, y + BORDER + cy * 8, fg)
+				else
+					draw(x + BORDER + 7, y + BORDER + cy * 8, bg)
+				end
+			end
+		end
+	end
 end

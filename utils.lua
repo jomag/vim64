@@ -75,6 +75,17 @@ function fatal(s, ...)
 	error(io.write(s:format(...) .. "\n"))
 end
 
+function format_bits(byte, sep)
+	if sep == nil then
+		sep = ""
+	end
+	local s = ""
+	for i = 0, 7 do
+		s = s .. (i > 0 and sep or "") .. (bit_set(byte, (7 - i)) and 1 or 0)
+	end
+	return s
+end
+
 function base64_decode(enc)
 	local res = {}
 	local i = 1
@@ -110,13 +121,12 @@ function load_bin(path)
 		return nil
 	end
 
-	io.input(f)
-	local data = io.read("*all")
+	local data = f:read("*all")
 	f:close()
 
 	local bin = {}
 	for i = 1, #data do
-		bin[i] = string.byte(data, i)
+		bin[i - 1] = string.byte(data, i)
 	end
 
 	return bin
@@ -146,4 +156,18 @@ function get_key_count(tbl)
 	local count = 0
 	for _ in pairs(tbl) do count = count + 1 end
 	return count
+end
+
+function pet2ascii(pet)
+	conv = "@ABCDEFGHIJKLMNOPQRSTUVWXYZ[$]?? !\"#$%&'()*+,-./0123456789:;<=>?"
+	asc = conv:sub(pet + 1, pet + 1)
+	if asc == nil then
+		return " "
+	else
+		return asc
+	end
+end
+
+function is_digit(s)
+	return s:match("^[0-9]$") ~= nil
 end

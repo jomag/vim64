@@ -159,9 +159,8 @@ function Cpu6502:format_internals()
 		"ADR:%02x DATA:%02x TCU:%d", self.adr, self.data, self.tcu)
 end
 
-function Cpu6502:step(data)
+function Cpu6502:step()
 	self.cycle = self.cycle + 1
-	self.data = data
 
 	local instr = self.instructions[self.ir]
 	if instr == nil then
