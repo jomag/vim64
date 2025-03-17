@@ -1,6 +1,5 @@
 require "cpu"
 require "utils"
-require "bus_c64"
 require "video"
 require "cia"
 require "sid"

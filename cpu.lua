@@ -36,11 +36,6 @@ Cpu6502 = {
 	-- Resets to zero for each new instruction.
 	tcu = 0,
 
-	-- Predecode Register
-	-- Contains the last byte read.
-	-- This register is not accessible.
-	pd = 0,
-
 	-- Cycle count since reset
 	cycle = 0,
 
@@ -102,7 +97,7 @@ function Cpu6502:exec_load(v)
 	return v
 end
 
-function Cpu6502:reset_sequence(bus, force_start_address)
+function Cpu6502:reset_sequence(bus, start_address)
 	-- Reset sequence is not correctly emulated:
 	-- It initializes all registers to their expected values
 	-- after initial X cycles, so that it matches the
@@ -111,22 +106,19 @@ function Cpu6502:reset_sequence(bus, force_start_address)
 	self.a = 0xAA
 	self.x = 0
 	self.y = 0
-	if force_start_address ~= nil then
-		validate_u16(force_start_address)
-		self.pc = force_start_address
-	else
-		self.pc = bus:get_word(0xFFFC)
+	if start_address ~= nil then
+		validate_u16(start_address)
+		self.pc = start_address
 	end
 	self.sp = 0xBD
 	self.ir = 0
 	self.tcu = 0
 	self.cycle = 0
 	self.adr = self.pc
-	self.data = 4
+	self.data = 0xA2
 
 	self.a = 0
 	self.x = 0xC0
-	self.pd = bus:get(self.pc)
 
 	self.p.z = true
 	self.p.i = true

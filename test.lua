@@ -1,5 +1,4 @@
 require "cpu"
-require "bus"
 
 local TestBus = {}
 setmetatable(TestBus, { __index = Bus })

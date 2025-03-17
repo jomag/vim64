@@ -28,7 +28,13 @@ function VicII:get(adr)
 		end
 	end
 
-	if adr == 0x12 then
+	if adr >= 0 and adr <= 0xF then
+		if adr % 2 == 0 then
+			return self.sprites[adr / 2].x
+		else
+			return self.sprites[(adr - 1) / 2].y
+		end
+	elseif adr == 0x12 then
 		-- Return current raster line
 		return 0
 	elseif adr == 0x16 then
@@ -117,7 +123,16 @@ function VicII:set(adr, val)
 	end
 end
 
-function VicII:step()
+-- adr is the local adress, if this device is selected (chip enabled)
+-- data is 8-bit bus data for write operations, nil for read operations
+function VicII:step(adr, data)
+	if adr ~= nil then
+		if data ~= nil then
+			self:set(adr, data)
+		else
+			return self:get(adr)
+		end
+	end
 end
 
 function VicII:new(props)
@@ -149,7 +164,7 @@ end
 
 -- Do a naive render of the whole screen
 -- draw is a function with args: x, y, color
-function VicII:naive_render(draw, bus)
+function VicII:naive_render(draw, c64)
 	-- First fill all borders
 	local c = self.border_color
 	for y = 0, BORDER - 1 do
@@ -179,12 +194,12 @@ function VicII:naive_render(draw, bus)
 	local char_offset = 0
 	for cy = 0, 24 do
 		for cx = 0, 39 do
-			local fg = bit.band(bus:get(0xD800 + cy * 40 + cx), 0xF)
-			local char = bus:get(0x400 + cy * 40 + cx)
+			local fg = bit.band(c64.color_ram[cy * 40 + cx], 0xF)
+			local char = c64:inspect_byte(0x400 + cy * 40 + cx)
 			local ptr = char_offset + char * 8
 			local x = cx * 8
 			for y = 0, 7 do
-				local row = bus.char[ptr + y]
+				local row = c64.char_rom[ptr + y]
 
 				if bit_set(row, 7) then
 					draw(x + BORDER, y + BORDER + cy * 8, fg)

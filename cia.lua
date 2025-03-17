@@ -8,46 +8,7 @@
 -- Count pulses on /CNT. Only phi2 pulses handled today (every step() invocation)
 
 CIA = {
-	chip_enabled    = false,
-
-	port_a          = {
-		-- For each bit, 0 = read, 1 = write		
-		dir = 0,
-		value = 0,
-	},
-
-	port_b          = {
-		-- For each bit, 0 = read, 1 = write		
-		dir = 0,
-		value = 0,
-	},
-
-	timer_a         = {
-		control = 0,
-		start = 0,
-		value = 0,
-	},
-
-	timer_b         = {
-		control = 0,
-		start = 0,
-		value = 0,
-	},
-
-	int_control_reg = 0,
-	int_status_reg  = 0
 }
-
-function CIA:set_int_status_reg(v)
-	-- Bit 7 decides if bits should be turned off or on
-	-- For all bits 0..6 that are set, the corresponding bit in the interrupt
-	-- status register will be set to the same value as bit 7, the "fill bit".
-	if bit_set(v, 7) then
-		self.int_status_reg = bit.bor(self.int_status_reg, bit.band(v, 0x7F))
-	else
-		self.int_status_reg = bit.band(self.int_status_reg, bit.bnot(v))
-	end
-end
 
 function CIA:get(adr)
 	local function notimplemented(msg)
@@ -64,6 +25,12 @@ function CIA:get(adr)
 	if adr == 0x00 then
 		print("Reading port A value")
 		return self.port_a.value
+	elseif adr == 0x0D then
+		print("INT_DATA READ! Clearing INT_DATA and IRQ pin")
+		local retval = self.int_data
+		self.int_data = 0
+		self.irq = false
+		return retval
 	elseif adr == 0x0E then
 		return self.timer_a.control
 	else
@@ -112,7 +79,14 @@ function CIA:set(adr, val)
 			self.timer_b.value = self.timer_b.start
 		end
 	elseif adr == 0x0D then
-		self:set_int_status_reg(val)
+		-- Bit 7 decides if bits should be turned off or on
+		-- For all bits 0..6 that are set, the corresponding bit in the interrupt
+		-- status register will be set to the same value as bit 7, the "fill bit".
+		if bit_set(val, 7) then
+			self.int_mask = bit.bor(self.int_mask, bit.band(val, 0x7F))
+		else
+			self.int_mask = bit.band(self.int_mask, bit.band(bit.bnot(val), 0x7F))
+		end
 	elseif adr == 0x0E then
 		if bit_set(val, 4) then
 			self.timer_a.value = self.timer_a.start
@@ -149,24 +123,75 @@ function CIA:debug_print()
 	s = s .. ("  Start value: %04x\n"):format(self.timer_b.start)
 	s = s .. ("  Value:       %04x\n"):format(self.timer_b.value)
 	s = s .. ("  Control reg: %02x (%s)\n"):format(self.timer_b.control, format_bits(self.timer_b.control))
-	s = s .. ("Int control reg: %02x (%s)\n"):format(self.int_control_reg, format_bits(self.int_control_reg))
-	s = s .. ("Int status reg:  %02x (%s)\n"):format(self.int_control_reg, format_bits(self.int_control_reg))
+	s = s .. ("Int Mask: %02x (%s)\n"):format(self.int_mask, format_bits(self.int_mask))
+	s = s .. ("Int Data: %02x (%s)\n"):format(self.int_data, format_bits(self.int_data))
 	return s
 end
 
 function CIA:new(props)
-	local v = setmetatable(props or {}, { __index = self })
+	local v = setmetatable(props or {
+		chip_enabled = false,
+
+		port_a       = {
+			-- For each bit, 0 = read, 1 = write		
+			dir = 0,
+			value = 0,
+		},
+
+		port_b       = {
+			-- For each bit, 0 = read, 1 = write		
+			dir = 0,
+			value = 0,
+		},
+
+		timer_a      = {
+			control = 0,
+			start = 0,
+			value = 0,
+		},
+
+		timer_b      = {
+			control = 0,
+			start = 0,
+			value = 0,
+		},
+
+		in_a         = 0,
+		in_b         = 0,
+
+		-- Turns true on interrupt request (IRQ pin is reversed)
+		irq          = false,
+		int_mask     = 0,
+		int_data     = 0
+	}, { __index = self })
 	return v
 end
 
--- in_a, in_b: input state of port a and b
-function CIA:step(in_a, in_b)
-	in_a = bit.band(bit.bnot(self.port_a.dir), in_a)
-	in_b = bit.band(bit.bnot(self.port_b.dir), in_b)
+function CIA:step(adr, data)
+	local retval = nil
+
+	if adr ~= nil and data ~= nil then
+		self:set(adr, data)
+	end
+
+	if adr ~= nil and data == nil then
+		retval = self:get(adr)
+	end
+
+	local in_a = bit.band(bit.bnot(self.port_a.dir), self.in_a)
+	local in_b = bit.band(bit.bnot(self.port_b.dir), self.in_b)
 
 	if not bit_set(self.timer_a.control, 5) then
 		if bit_set(self.timer_a.control, 0) then
 			if self.timer_a.value == 0 then
+				self.int_data = bit.bor(self.int_data, 1)
+				if bit.band(self.int_mask, 1) == 0 then
+					self.int_data = bit.bor(self.int_data, 0xFF)
+				else
+					self.int_data = bit.bor(self.int_data, 0x81)
+					self.irq = true
+				end
+
 				self.timer_a.value = self.timer_a.start
 				if bit_set(self.timer_a.control, 4) then
 					self.timer_a.running = false
@@ -180,6 +205,14 @@ function CIA:step(in_a, in_b)
 	if not bit_set(self.timer_b.control, 5) then
 		if bit_set(self.timer_b.control, 0) then
 			if self.timer_b.value == 0 then
+				self.int_data = bit.bor(self.int_data, 2)
+				if bit.band(self.int_mask, 2) == 0 then
+					self.int_data = bit.bor(self.int_data, 2)
+				else
+					self.int_data = bit.bor(self.int_data, 0x82)
+					self.irq = true
+				end
+
 				self.timer_b.value = self.timer_a.start
 				if bit_set(self.timer_b.control, 4) then
 					self.timer_b.running = false
@@ -189,4 +222,6 @@ function CIA:step(in_a, in_b)
 			end
 		end
 	end
+
+	return retval
 end

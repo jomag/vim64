@@ -110,7 +110,13 @@ function love.load()
 	STATE.buf_image:setFilter("nearest", "nearest")
 
 	print("Resetting machine...")
-	STATE.machine.cpu:reset_sequence(STATE.bus)
+	STATE.machine.cpu:reset_sequence(
+		STATE.bus,
+		word(
+			STATE.machine:inspect_byte(0xFFFC),
+			STATE.machine:inspect_byte(0xFFFD)
+		)
+	)
 
 	print("Generating font...")
 	local font = generate_c64_font();
@@ -132,8 +138,8 @@ function love.update()
 
 	step(16667)
 
-	STATE.vic:naive_render(function(x, y, c)
+	STATE.machine.vic:naive_render(function(x, y, c)
 		local cc = COLORS[c]
 		STATE.buf:setPixel(x, y, cc[1], cc[2], cc[3], 1)
-	end, STATE.bus)
+	end, STATE.machine)
 end
