@@ -28,6 +28,8 @@ function VicII:get(adr)
 		end
 	end
 
+	print("ADR", adr)
+
 	if adr >= 0 and adr <= 0xF then
 		if adr % 2 == 0 then
 			return self.sprites[adr / 2].x
@@ -130,6 +132,7 @@ function VicII:step(adr, data)
 		if data ~= nil then
 			self:set(adr, data)
 		else
+			print("Should return something. Will return", self:get(adr))
 			return self:get(adr)
 		end
 	end
@@ -138,14 +141,14 @@ end
 function VicII:new(props)
 	local v = setmetatable(props or {}, { __index = self })
 	v.sprites = {
-		[0] = { color = 0 },
-		[1] = { color = 0 },
-		[2] = { color = 0 },
-		[3] = { color = 0 },
-		[4] = { color = 0 },
-		[5] = { color = 0 },
-		[6] = { color = 0 },
-		[7] = { color = 0 },
+		[0] = { color = 0, x = 0, y = 0 },
+		[1] = { color = 0, x = 0, y = 0 },
+		[2] = { color = 0, x = 0, y = 0 },
+		[3] = { color = 0, x = 0, y = 0 },
+		[4] = { color = 0, x = 0, y = 0 },
+		[5] = { color = 0, x = 0, y = 0 },
+		[6] = { color = 0, x = 0, y = 0 },
+		[7] = { color = 0, x = 0, y = 0 },
 	}
 	return v
 end

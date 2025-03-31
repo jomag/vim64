@@ -1,43 +1,108 @@
 require "cpu"
+require "dbg"
 
-local TestBus = {}
-setmetatable(TestBus, { __index = Bus })
+TestMachine = {}
 
-function TestBus:new(o)
-	o = Bus:new(o or {})
-	setmetatable(o, self)
-	self.__index = self
-	return o
-end
-
-function TestBus:load(path, adr)
-	local bin = load_bin(path)
-	if bin == nil then
-		printf("Failed to load %s\n", path)
-		return
+function TestMachine:new(rom_path, rom_offset)
+	local ram = {}
+	for i = 0, 65536 do
+		ram[i] = 0
 	end
 
+	local bin = load_bin(rom_path)
+	if bin == nil then
+		printf("Failed to load %s\n", path)
+		os.exit(1)
+	end
+
+	rom_offset = rom_offset or 0
 	for i, v in ipairs(bin) do
-		self:set(adr + i - 1, v)
+		ram[i + rom_offset] = v
+	end
+
+	local machine = {
+		cpu = Cpu6502:new(),
+		ram = ram,
+	}
+
+	setmetatable(machine, { __index = self })
+	return machine
+end
+
+function TestMachine:inspect(adr)
+	validate_u16(adr)
+	return self.ram[adr]
+end
+
+function TestMachine:step()
+	self.cpu:step()
+	if self.cpu.read then
+		self.cpu.data = self.ram[self.cpu.adr]
+	else
+		if self.cpu.adr == 0xBFFC then
+			if bit_set(self.cpu.data, 0) then
+				printf("Interrupt Request (0x%04X = %02X)\n", self.cpu.adr, self.cpu.data)
+				self.cpu.int = true
+			end
+		end
+		self.ram[self.cpu.adr] = self.cpu.data
 	end
 end
 
 local function run_test(cycles)
-	local cpu = Cpu6502:new()
-	local bus = TestBus:new()
-	bus:load("6502_functional_test.bin", 0)
+	local m = TestMachine:new("6502_functional_test.bin")
+	m.cpu:reset_sequence(0x400, 0xD8)
+	while cycles == nil or m.cpu.cycle < cycles do
+		-- print(m.cpu:format_state() .. " " .. m.cpu:format_internals())
+		m:step()
+	end
+end
 
-	cpu:reset_sequence(bus, 0x400)
-	while cycles == nil or cpu.cycle < cycles do
-		-- print(cpu:format_state() .. " " .. cpu:format_internals())
-		cpu:step(bus)
+local function run_klaus_dormann_interrupt_test()
+	local dbg = Debugger:new()
+	local m = TestMachine:new("as64/6502_interrupt_test.bin", 10)
+	m.cpu:reset_sequence(0x400, m:inspect(0x400))
+
+	-- Start address of current instruction
+	local instr_adr = 0
+
+	-- How many times we've looped back to same instruction
+	local trap_counter = 0
+
+	dbg:break_at(0x465)
+
+	while m.cpu.pc ~= target_adr do
+		if m.cpu.tcu == 1 then
+			-- Detect traps
+			if m.cpu.adr == instr_adr then
+				trap_counter = trap_counter + 1
+				if trap_counter > 10 then
+					printf("Trapped at 0x%04x\n", instr_adr)
+					return
+				end
+			else
+				instr_adr = m.cpu.adr
+				trap_counter = 0
+			end
+
+			dbg:update(m.cpu)
+			if dbg.stopped then
+				dbg:prompt(m.cpu, m)
+			end
+		end
+
+		m:step()
+
+		if m.cpu.cycle % 10000 == 0 then
+			printf("Cycle %d, PC: %04x, IR: %02x, INTH: %s\n",
+				m.cpu.cycle, m.cpu.pc, m.cpu.ir,
+				tostring(m.cpu.TMP_HACK_INT_TCU))
+		end
 	end
 end
 
 local function run_test_until_address_reached(rom_path, target_adr)
-	local cpu = Cpu6502:new()
-	local bus = TestBus:new()
-	bus:load(rom_path, 0)
+	local m = TestMachine:new(rom_path)
 
 	local prev_adr = -1
 	local trap_count = 0
@@ -58,26 +123,18 @@ local function run_test_until_address_reached(rom_path, target_adr)
 		return false
 	end
 
-	cpu:reset_sequence(bus, 0x400)
+	m.cpu:reset_sequence(0x400, 0xD8)
 
-	while cpu.pc ~= target_adr do
-		local trapped = detect_trap(cpu)
+	while m.cpu.pc ~= target_adr do
+		local trapped = detect_trap(m.cpu)
 		if trapped ~= false then
 			printf("Trapped at 0x%04X\n", trapped)
 			break
 		end
 
-		local data
-		if cpu.read then
-			data = bus:get(cpu.adr)
-		else
-			data = cpu.data
-			bus:set(cpu.adr, data)
-		end
-
-		cpu:step(data)
-		if cpu.cycle % 1000000 == 0 then
-			printf("Cycle %d, PC: %04x\n", cpu.cycle, cpu.pc)
+		m:step()
+		if m.cpu.cycle % 1000000 == 0 then
+			printf("Cycle %d, PC: %04x\n", m.cpu.cycle, m.cpu.pc)
 		end
 	end
 end
@@ -118,23 +175,19 @@ local function run_test_with_validation(rom_path, expect_path, cycles)
 		return state, line
 	end
 
-	local function compare_states(cpu, bus, exp, exp_line)
+	local function compare_states(machine, exp, exp_line)
 		local res = true
 		for _, cmp in ipairs(cmp_list) do
 			local a = exp[cmp]
 			local b
 			if cmp == "rnw" then
-				b = (cpu.read and 1) or 0
+				b = (machine.cpu.read and 1) or 0
 			elseif cmp == "p" then
-				b = cpu:get_p()
+				b = machine.cpu:get_p()
 			elseif cmp == "data" then
-				if cpu.read then
-					b = bus:get_wo_sideffects(cpu.adr)
-				else
-					b = cpu.data
-				end
+				b = machine.cpu.data
 			else
-				b = cpu[cmp]
+				b = machine.cpu[cmp]
 			end
 
 			if a ~= b then
@@ -151,46 +204,50 @@ local function run_test_with_validation(rom_path, expect_path, cycles)
 		return res
 	end
 
-	local cpu = Cpu6502:new()
-	local bus = TestBus:new()
-	bus:load(rom_path, 0)
+	local machine = TestMachine:new(rom_path)
+	if machine == nil then
+		return
+	end
 
-	cpu:reset_sequence(bus, 0x400)
-	while cycles == nil or cpu.cycle < cycles do
+	machine.cpu:reset_sequence(0x400, 0xD8)
+
+	while cycles == nil or machine.cpu.cycle < cycles do
 		local exp, exp_line = next_expected_state()
 		if exp == nil then
 			print("End of expected cycles. Success!")
 			break
 		end
 
-		if exp.halfcyc > cpu.cycle * 2 + 1 then
+		if exp.halfcyc > machine.cpu.cycle * 2 + 1 then
 			printf("Fast forwarding to cycle %d...\n", exp.halfcyc / 2)
-			while exp.halfcyc > cpu.cycle * 2 + 1 do
-				cpu:step(bus)
+			while exp.halfcyc > machine.cpu.cycle * 2 + 1 do
+				machine.cpu:step()
 			end
 		end
 
-		print(tostring(cpu.cycle) .. ": " .. cpu:format_state() .. " " .. cpu:format_internals())
+		-- print(tostring(machine.cpu.cycle) .. ": " .. machine.cpu:format_state() .. " " .. machine.cpu:format_internals())
 
-		if not compare_states(cpu, bus, exp, exp_line) then
-			print("wtf?", cpu:get_p(), cpu.p.c, bit.bor(0, cpu.p.c and 1 or 0))
+		if not compare_states(machine, exp, exp_line) then
 			print("Test failed.")
-			printf("%d/151 instructions implemented\n", get_key_count(Cpu6502.instructions))
 			break
 		end
 
-		print("")
-		cpu:step(bus)
+		-- print("")
+		machine:step()
 	end
 end
 
-if true then
-	run_test_until_address_reached("simulations/6502_functional_test.bin", 0x1113477)
-else
+run_klaus_dormann_interrupt_test()
+
+if false then
+	run_test_until_address_reached("6502_functional_test.bin", 0x1113477)
+end
+
+if false then
 	run_test_with_validation(
-		"simulations/6502_functional_test.bin",
-		"simulations/decimal_tests.txt"
-	-- "simulations/100M.txt"
+		"6502_functional_test.bin",
+		-- "simulations/decimal_tests.txt"
+		"simulations/100M.txt"
 	-- "simulations/6502_functional_test.perfect6502"
 	)
 end

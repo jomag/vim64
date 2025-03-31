@@ -1,60 +1,67 @@
 require "utils"
 
-Cpu6502 = {
-	-- Accumulator register
-	a = 0,
+Cpu6502 = {}
 
-	-- Index registers
-	x = 0,
-	y = 0,
+function Cpu6502:new()
+	local cpu = {
+		-- Accumulator register
+		a = 0,
 
-	-- Program Counter Register
-	pc = 0xFFFC,
+		-- Index registers
+		x = 0,
+		y = 0,
 
-	-- Stack Pointer Register
-	sp = 0,
+		-- Program Counter Register
+		pc = 0xFFFC,
 
-	-- Processor Status Register
-	-- Bit order: N O 1 B D I Z C
-	p = {
-		n = false,     -- Negative
-		o = false,     -- Overflow
-		b = false,     -- B-flag
-		d = false,     -- Decimal
-		i = false,     -- Interrupt Disable
-		z = false,     -- Zero
-		c = false,     -- Carry
-		ignored_bit = false, -- The ignored bit, for correct emu
-	},
+		-- Stack Pointer Register
+		sp = 0,
 
-	-- Instruction Register
-	-- Contains the opcode of the current instruction
-	ir = 0,
+		-- Processor Status Register
+		-- Bit order: N O 1 B D I Z C
+		p = {
+			n = false,  -- Negative
+			o = false,  -- Overflow
+			b = false,  -- B-flag
+			d = false,  -- Decimal
+			i = false,  -- Interrupt Disable
+			z = false,  -- Zero
+			c = false,  -- Carry
+			ignored_bit = false, -- The ignored bit, for correct emu
+		},
 
-	-- Time Control Unit
-	-- Contains the subcycle of current instruction execution.
-	-- Resets to zero for each new instruction.
-	tcu = 0,
+		-- Instruction Register
+		-- Contains the opcode of the current instruction
+		-- Special values: -1 = Interrupt sequence, -2 = NMI sequence
+		ir = 0,
 
-	-- Cycle count since reset
-	cycle = 0,
+		-- Time Control Unit
+		-- Contains the subcycle of current instruction execution.
+		-- Resets to zero for each new instruction.
+		tcu = 0,
 
-	-- Equivalent to the read/write pin
-	-- If true, the next half cycle will read from
-	-- from bus into "data" (bus:get()).
-	-- If false, the next half cycle will write
-	-- "data" to bus (bus:set()).
-	read = true,
+		-- Cycle count since reset
+		cycle = 0,
 
-	-- Bus address pins
-	adr = 0,
+		-- Equivalent to the read/write pin
+		-- If true, the next half cycle will read from
+		-- from bus into "data" (bus:get()).
+		-- If false, the next half cycle will write
+		-- "data" to bus (bus:set()).
+		read = true,
 
-	-- Bus data pins
-	data = 0,
-}
+		-- Bus address pins
+		adr = 0,
 
-function Cpu6502:new(props)
-	local cpu = setmetatable(props or {}, { __index = self })
+		-- Bus data pins
+		data = 0,
+
+		-- Interrupt pin (input). True on interrupt.
+		int = false,
+	}
+
+	setmetatable(cpu, self)
+	Cpu6502.__index = Cpu6502
 	return cpu
 end
 
@@ -97,7 +104,7 @@ function Cpu6502:exec_load(v)
 	return v
 end
 
-function Cpu6502:reset_sequence(bus, start_address)
+function Cpu6502:reset_sequence(start_address, preload_data_hack)
 	-- Reset sequence is not correctly emulated:
 	-- It initializes all registers to their expected values
 	-- after initial X cycles, so that it matches the
@@ -115,7 +122,9 @@ function Cpu6502:reset_sequence(bus, start_address)
 	self.tcu = 0
 	self.cycle = 0
 	self.adr = self.pc
-	self.data = 0xA2
+
+	-- FIXME: this is a hack to kickstart the emu!
+	self.data = preload_data_hack or 0
 
 	self.a = 0
 	self.x = 0xC0
@@ -154,7 +163,26 @@ end
 function Cpu6502:step()
 	self.cycle = self.cycle + 1
 
+	-- On interrupt, the CPU will wait until current instruction
+	-- has finished before invoking the interrupt handler.
+	-- TODO: handle the exception from this rule: the BRK instruction.
+	--
+	if self.int and self.p.i then
+		print("INT still requesting, but I-flag high and tcu:", self.tcu, self.ir)
+	end
+
+	if self.int and not self.p.i and self.tcu == 1 then
+		print("TRIGGER!")
+		self.p.i = true
+		self.p.b = false
+		self.ir = -1
+	end
+
 	local instr = self.instructions[self.ir]
+	if self.ir == -1 then
+		instr = interrupt_sequence
+	end
+
 	if instr == nil then
 		fatal("Unimplemented op: 0x%02x", self.ir)
 		return

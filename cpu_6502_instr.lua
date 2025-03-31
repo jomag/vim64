@@ -813,7 +813,7 @@ end
 -- LDA, LDX, LDY: zero-page
 local function load_zp_op(name, setter_cb)
 	return {
-		op = name,
+		adrmode = ADRMODE_ZPG,
 		[1] = read_zp_cycle1,
 		[2] = function(cpu)
 			setter_cb(cpu, cpu:exec_load(cpu.data))
@@ -821,7 +821,6 @@ local function load_zp_op(name, setter_cb)
 			cpu.tcu = 0
 		end,
 		[0] = prepare_next_op,
-
 	}
 end
 
@@ -882,6 +881,10 @@ local function cmp_abs_op(name, value_cb)
 end
 
 local function asl_op(addr_fun)
+	return {
+		mnemonic = "ASL",
+
+	}
 	return addr_fun(
 		"ASL",
 		nil,
@@ -974,13 +977,14 @@ local function and_op(addr_fun)
 end
 
 local function ora_op(addr_fun)
-	return addr_fun(
-		"OR",
+	return merge({
+		("name"): "ORA"
+	}, addr_fun(
 		nil,
 		function(cpu, val)
 			return cpu:exec_load(bit.bor(cpu.a, val))
 		end
-	)
+	)})
 end
 
 local function eor_op(addr_fun)
@@ -1240,11 +1244,239 @@ local function dec_y(cpu)
 	update_flags(cpu, cpu.y)
 end
 
+interrupt_sequence = {
+	[1] = function(cpu)
+		print("INTSEQ 1")
+		cpu.adr = 0x100 + cpu.sp
+		cpu.sp = bit.band(cpu.sp - 1, 0xFF)
+		cpu.data = upper_byte(cpu.pc)
+		cpu.read = false
+		cpu.tcu = 2
+	end,
+	[2] = function(cpu)
+		print("INTSEQ 2")
+		cpu.adr = 0x100 + cpu.sp
+		cpu.sp = bit.band(cpu.sp - 1, 0xFF)
+		cpu.data = bit.band(cpu.pc, 0xFF)
+		cpu.read = false
+		cpu.tcu = 3
+	end,
+	[3] = function(cpu)
+		print("INTSEQ 3")
+		cpu.adr = 0x100 + cpu.sp
+		cpu.sp = bit.band(cpu.sp - 1, 0xFF)
+		printf("PUSHING TO STACK: %02x\n", cpu:get_p())
+		cpu.data = cpu:get_p()
+		cpu.read = false
+		cpu.tcu = 4
+	end,
+	[4] = function(cpu)
+		print("INTSEQ 4")
+		cpu.adr = 0xFFFE
+		cpu.read = true
+		cpu.tcu = 5
+	end,
+	[5] = function(cpu)
+		print("INTSEQ 5")
+
+		cpu.LOW_BYTE = cpu.data
+		cpu.adr = 0xFFFF
+		cpu.tcu = 6
+	end,
+	[6] = function(cpu)
+		print("INTSEQ 6")
+		cpu.pc = word(cpu.LOW_BYTE, cpu.data)
+		cpu.adr = cpu.pc
+		cpu.tcu = 0
+	end,
+	[0] = function(cpu)
+		print("INTSEQ 0")
+		cpu.TMP_HACK_INT_TCU = nil
+		prepare_next_op(cpu)
+	end
+}
+
+ADRMODE_ABS_X = "abs,X"
+ADRMODE_ABS_Y = "abs,Y"
+ADRMODE_IMPL = "impl"
+ADRMODE_ZPG_X = "zpg,X"
+ADRMODE_ZPG_Y = "zpg,Y"
+ADRMODE_IND_Y = "ind,Y"
+ADRMODE_REL = "rel"
+ADRMODE_IND = "ind"
+ADRMODE_IMMEDIATE = "#"
+ADRMODE_ACC = "A"
+ADRMODE_ZPG = "zpg"
+ADRMODE_X_IND = "X,ind"
+ADRMODE_ABS = "abs"
+
+OP_BRK = "BRK"
+OP_ORA = "ORA"
+OP_AND = "AND"
+OP_EOR = "EOR"
+OP_ADC = "ADC"
+OP_LDA = "LDA"
+OP_CMP = "CMP"
+OP_BRK = "BRK"
+OP_JMP = "JMP"
+OP_JSR = "JSR"
+OP_RTI = "RTI"
+OP_NOP = "NOP"
+OP_STA = "STA"
+OP_SBC = "SBC"
+OP_RTS = "RTS"
+OP_CPY = "CPY"
+OP_CPX = "CPX"
+OP_LDY = "LDY"
+OP_BIT = "BIT"
+OP_BMI = "BMI"
+OP_SEC = "SEC"
+OP_CLI = "CLI"
+OP_BVC = "BVC"
+OP_PHA = "PHA"
+OP_PLP = "PLP"
+OP_PHP = "PHP"
+OP_CLC = "CLC"
+OP_SED = "SED"
+OP_BEQ = "BEQ"
+OP_BCS = "BCS"
+OP_CLD = "CLD"
+OP_BNE = "BNE"
+OP_STY = "STY"
+OP_SEI = "SEI"
+OP_TYA = "TYA"
+OP_CLV = "CLV"
+OP_BVS = "BVS"
+OP_BPL = "BPL"
+OP_PLA = "PLA"
+OP_DEY = "DEY"
+OP_TAY = "TAY"
+OP_INY = "INY"
+OP_INX = "INX"
+OP_BCC = "BCC"
+
+-- Illegal opcodes
+OPX_JAM = "JAM"
+OPX_NOP = "NOP"
+OPX_SHY = "SHY"
+
+local function op_metadata(opcode)
+	-- Operations are laid out by a pattern a-b-c, where a is bit 5..7,
+	-- b is bit 2..4 and c is 0..1.
+	-- Ref: https://www.masswerk.at/6502/6502_instruction_set.html#layout
+	local a = bit.band(bit.rshift(opcode, 5), 7)
+	local b = bit.band(bit.rshift(opcode, 2), 7)
+	local c = bit.band(opcode, 3)
+
+	local y_exception = (c == 2 or c == 3) and (a == 4 or a == 5)
+
+	-- Determine addressing mode
+	local adrmode = nil
+	if b == 7 then
+		adrmode = (y_exception and ADRMODE_ABS_Y) or ADRMODE_ABS_X
+	elseif b == 6 then
+		adrmode = ((c == 0 or c == 2) and ADRMODE_IMPL) or ADRMODE_ABS_Y
+	elseif b == 5 then
+		adrmode = (y_exception and ADRMODE_ZPG_Y) or ADRMODE_ZPG_X
+	elseif b == 4 then
+		adrmode = ((c == 0 or c == 2) and ADRMODE_REL) or ADRMODE_IND_Y
+	elseif b == 3 then
+		adrmode = (opcode == 0x6C and ADRMODE_IND) or ADRMODE_ABS
+	elseif b == 2 then
+		if c == 2 and b < 4 then
+			adrmode = ADRMODE_ACC
+		else
+			adrmode = ((c == 0 or c == 2) and ADRMODE_IMPL) or ADRMODE_IMMEDIATE
+		end
+	elseif b == 1 then
+		adrmode = ADRMODE_ZPG
+	else
+		if c == 1 or c == 3 then
+			adrmode = ADRMODE_X_IND
+		elseif opcode == 0x00 or opcode == 0x40 or opcode == 0x60 then
+			adrmode = ADRMODE_IMPL
+		elseif opcode == 0x20 then
+			adrmode = ADRMODE_ABS
+		else
+			adrmode = ADRMODE_IMMEDIATE
+		end
+	end
+
+	-- Operands based on c, a, b grouping
+	local opgrid = zero_based {
+		{
+			{ OP_BRK,  OPX_NOP, OP_PHP, OPX_NOP, OP_BPL, OPX_NOP, OP_CLC, OPX_NOP },
+			{ OP_JSR,  OP_BIT,  OP_PLP, OP_BIT,  OP_BMI, OPX_NOP, OP_SEC, OPX_NOP },
+			{ OP_RTI,  OPX_NOP, OP_PHA, OP_JMP,  OP_BVC, OPX_NOP, OP_CLI, OPX_NOP },
+			{ OP_RTS,  OPX_NOP, OP_PLA, OP_JMP,  OP_BVS, OPX_NOP, OP_SEI, OPX_NOP },
+			{ OPX_NOP, OP_STY,  OP_DEY, OP_STY,  OP_BCC, OP_STY,  OP_TYA, OPX_SHY },
+			{ OP_LDY,  OP_LDY,  OP_TAY, OP_LDY,  OP_BCS, OP_LDY,  OP_CLV, OP_LDY },
+			{ OP_CPY,  OP_CPY,  OP_INY, OP_CPY,  OP_BNE, OPX_NOP, OP_CLD, OPX_NOP },
+			{ OP_CPX,  OP_CPX,  OP_INX, OP_CPX,  OP_BEQ, OPX_NOP, OP_SED, OPX_NOP }
+		}
+	}
+
+
+	-- Determine operation
+	local op = nil
+
+	if c == 0 then
+		if opcode == 0 then
+			op = OP_BRK
+		end
+	elseif c == 1 then
+		if a == 0 then
+			op = OP_ORA
+		elseif a == 1 then
+			op = OP_AND
+		elseif a == 2 then
+			op = OP_EOR
+		elseif a == 3 then
+			op = OP_ADC
+		elseif a == 4 then
+			op = (opcode == 0x89 and OP_NOP) or OP_STA
+		elseif a == 5 then
+			op = OP_LDA
+		elseif a == 6 then
+			op = OP_CMP
+		elseif a == 7 then
+			op = OP_SBC
+		end
+	elseif c == 2 then
+		if b == 4 then
+			op = OPX_JAM
+		end
+	elseif c == 3 then
+
+	end
+
+	return {
+		adrmode = adrmode,
+		op = op
+	}
+end
+
+-- TODO: This and Cpu6502.instructions contain redundant data.
+--       Generate Cpu6502.instructions based on the metadata!
+local function generate_instructions()
+	local all = {}
+
+	for opcode = 0, 255 do
+		all[op] = op_metadata(opcode)
+	end
+
+	return all
+end
+
+print(generate_instructions())
+os.exit(0)
+
 Cpu6502.instructions = {
 	-- 0x00: BRK
 	[0x00] = {
 		op = "BRK",
 		[1] = function(cpu)
+			print("BRK instruction reached!")
 			cpu.adr = 0x100 + cpu.sp
 			cpu.pc = cpu.pc + 1
 			cpu.read = false
@@ -1409,6 +1641,7 @@ Cpu6502.instructions = {
 	[0x40] = {
 		op = "RTI",
 		[1] = function(cpu)
+			print("\n\nR T I ! ! !\n\n")
 			cpu.pc = cpu.pc + 1
 			cpu.adr = 0x100 + cpu.sp
 			cpu.tcu = 2

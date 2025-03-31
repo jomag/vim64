@@ -171,3 +171,18 @@ end
 function is_digit(s)
 	return s:match("^[0-9]$") ~= nil
 end
+
+function zero_based(v)
+	return v
+end
+
+function merge(a, b)
+	m = {}
+	for k, v in ipairs(a) do
+		m[k] = v
+	end
+	for k, v in ipairs(b) do
+		m[k] = v
+	end
+	return m
+end

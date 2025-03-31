@@ -72,6 +72,7 @@ function C64:update_bus(adr)
 end
 
 function C64:step()
+	self.cpu.int = self.cia1.irq or self.cia2.irq
 	self.cpu:step()
 	local chip, adr = self:update_bus(self.cpu.adr)
 
