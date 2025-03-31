@@ -186,3 +186,45 @@ function merge(a, b)
 	end
 	return m
 end
+
+-- Calls fun(i) n times, and return result in a zero-based list
+function map_range(n, fun_or_val)
+	local res = {}
+	for i = 0, n - 1 do
+		if type(fun_or_val) == "function" then
+			res[i] = fun_or_val(i)
+		else
+			res[i] = fun_or_val
+		end
+	end
+	return res
+end
+
+function table_length(tbl)
+	local c = 0
+	for v in pairs(tbl) do
+		c = c + 1
+	end
+	return c
+end
+
+-- Convert a one-based list to zero-based
+function zb(tbl)
+	ztbl = {}
+
+	for k, v in pairs(tbl) do
+		if type(k) ~= "number" then
+			print("non-numeric key in table")
+			os.exit(1)
+		end
+
+		if k == 0 then
+			print("zero-key found in list")
+			os.exit(1)
+		end
+
+		ztbl[k - 1] = v
+	end
+
+	return ztbl
+end

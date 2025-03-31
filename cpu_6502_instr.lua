@@ -93,6 +93,12 @@ local function generic_x_ind_cycle3(cpu)
 	cpu.tcu = 4
 end
 
+local function read_zp_cycle1(cpu)
+	cpu.pc = cpu.pc + 1
+	cpu.adr = cpu.data
+	cpu.tcu = 2
+end
+
 local function bitop_cyclen(cpu)
 	cpu.TMP = cpu.data
 	cpu.p.n = bit7(cpu.TMP)
@@ -114,10 +120,28 @@ local function bitop_cycle0(cpu)
 	prepare_next_op(cpu)
 end
 
+---
+--- Addressing modes
+---
 
-local function rd_zp_op(name, prep_cb, process_cb)
+local function rd_immediate_op(prep_cb, process_cb)
 	return {
-		op = name,
+		len = 2,
+		[1] = function(cpu)
+			if prep_cb then
+				prep_cb(cpu, cpu.data)
+			end
+			cpu.pc = cpu.pc + 1
+			cpu.adr = cpu.pc
+			cpu.tcu = 0
+		end,
+		[0] = prepare_next_op,
+	}
+end
+
+local function rd_zp_op(prep_cb, process_cb)
+	return {
+		len = 2,
 		[1] = function(cpu)
 			cpu.adr = cpu.data
 			cpu.pc = cpu.pc + 1
@@ -132,7 +156,9 @@ local function rd_zp_op(name, prep_cb, process_cb)
 			cpu.tcu = 0
 		end,
 		[0] = function(cpu)
-			cpu.a = process_cb(cpu, cpu.TMP)
+			if process_cb then
+				cpu.a = process_cb(cpu, cpu.TMP)
+			end
 			prepare_next_op(cpu)
 		end
 	}
@@ -142,9 +168,9 @@ end
 -- Most (all?) operations do some status flag update,
 -- which is done through the prep callback in cycle 2.
 -- Operations: ASL, LSR, ROL, ROR
-local function rmw_zp_op(name, prep_cb, process_cb)
+local function rmw_zp_op(prep_cb, process_cb)
 	return {
-		op = name,
+		len = 2,
 		[1] = function(cpu)
 			cpu.adr = cpu.data
 			cpu.pc = cpu.pc + 1
@@ -171,9 +197,9 @@ local function rmw_zp_op(name, prep_cb, process_cb)
 	}
 end
 
-local function rd_zp_x_op(name, prep_cb, process_cb)
+local function rd_zp_x_op(prep_cb, process_cb)
 	return {
-		op = name,
+		len = 2,
 		[1] = function(cpu)
 			cpu.adr = cpu.data
 			cpu.pc = cpu.pc + 1
@@ -200,9 +226,9 @@ local function rd_zp_x_op(name, prep_cb, process_cb)
 	}
 end
 
-local function rd_zp_y_op(name, prep_cb, process_cb)
+local function rd_zp_y_op(prep_cb, process_cb)
 	return {
-		op = name,
+		len = 2,
 		[1] = function(cpu)
 			cpu.adr = cpu.data
 			cpu.pc = cpu.pc + 1
@@ -234,9 +260,9 @@ end
 -- Most (all?) operations do some status flag update,
 -- which is done through the prep callback in cycle 2.
 -- Operations: ASL, LSR, ROL, ROR
-local function rmw_zp_x_op(name, prep_cb, process_cb)
+local function rmw_zp_x_op(prep_cb, process_cb)
 	return {
-		op = name,
+		len = 2,
 		[1] = function(cpu)
 			cpu.adr = cpu.data
 			cpu.pc = cpu.pc + 1
@@ -267,9 +293,9 @@ local function rmw_zp_x_op(name, prep_cb, process_cb)
 	}
 end
 
-local function rd_abs_op(name, prep_cb, process_cb)
+local function rd_abs_op(prep_cb, process_cb)
 	return {
-		op = name,
+		len = 3,
 		[1] = generic_abs_cycle1,
 		[2] = function(cpu)
 			cpu.pc = cpu.pc + 1
@@ -291,10 +317,30 @@ local function rd_abs_op(name, prep_cb, process_cb)
 	}
 end
 
--- X-indexed, indirect
-local function rd_x_ind_op(name, prep_cb, process_cb)
+local function wr_abs_op(value_cb)
 	return {
-		op = name,
+		len = 3,
+		[1] = generic_abs_cycle1,
+		[2] = function(cpu)
+			cpu.pc = cpu.pc + 1
+			cpu.adr = word(cpu.LOW_BYTE, cpu.data)
+			cpu.read = false
+			cpu.data = value_cb(cpu)
+			cpu.tcu = 3
+		end,
+		[3] = function(cpu)
+			cpu.adr = cpu.pc
+			cpu.read = true
+			cpu.tcu = 0
+		end,
+		[0] = prepare_next_op,
+	}
+end
+
+-- X-indexed, indirect
+local function rd_x_ind_op(prep_cb, process_cb)
+	return {
+		len = 2,
 		[1] = generic_x_ind_cycle1,
 		[2] = generic_x_ind_cycle2,
 		[3] = generic_x_ind_cycle3,
@@ -319,9 +365,9 @@ local function rd_x_ind_op(name, prep_cb, process_cb)
 	}
 end
 
-local function wr_zp_ind_op(name, value_cb)
+local function wr_zp_ind_op(value_cb)
 	return {
-		op = name,
+		len = 2,
 		[1] = generic_zp_indexed_cycle1,
 		[2] = function(cpu)
 			cpu.read = false
@@ -338,9 +384,9 @@ local function wr_zp_ind_op(name, value_cb)
 	}
 end
 
-local function wr_x_ind_op(name, value_cb)
+local function wr_x_ind_op(value_cb)
 	return {
-		op = name,
+		len = 2,
 		[1] = generic_x_ind_cycle1,
 		[2] = generic_x_ind_cycle2,
 		[3] = generic_x_ind_cycle3,
@@ -360,9 +406,9 @@ local function wr_x_ind_op(name, value_cb)
 end
 
 -- inderect, Y-indexed
-local function rd_ind_y_op(name, prep_cb, process_cb)
+local function rd_ind_y_op(prep_cb, process_cb)
 	return {
-		op = name,
+		len = 2,
 		[1] = generic_ind_y_cycle1,
 		[2] = generic_ind_y_cycle2,
 		[3] = function(cpu)
@@ -395,9 +441,9 @@ local function rd_ind_y_op(name, prep_cb, process_cb)
 	}
 end
 
-local function wr_ind_y_op(name, value_cb)
+local function wr_ind_y_op(value_cb)
 	return {
-		op = name,
+		len = 2,
 		[1] = generic_ind_y_cycle1,
 		[2] = generic_ind_y_cycle2,
 		[3] = function(cpu)
@@ -420,9 +466,9 @@ local function wr_ind_y_op(name, value_cb)
 	}
 end
 
-local function rd_abs_x_op(name, prep_cb, process_cb)
+local function rd_abs_x_op(prep_cb, process_cb)
 	return {
-		op = name,
+		len = 3,
 		[1] = generic_abs_x_cycle1,
 		[2] = function(cpu)
 			cpu.pc = cpu.pc + 1
@@ -455,9 +501,9 @@ local function rd_abs_x_op(name, prep_cb, process_cb)
 	}
 end
 
-local function wr_abs_x_op(name, value_cb)
+local function wr_abs_x_op(value_cb)
 	return {
-		op = name,
+		len = 3,
 		[1] = generic_abs_x_cycle1,
 		[2] = function(cpu)
 			cpu.pc = cpu.pc + 1
@@ -480,9 +526,9 @@ local function wr_abs_x_op(name, value_cb)
 	}
 end
 
-local function wr_abs_y_op(name, value_cb)
+local function wr_abs_y_op(value_cb)
 	return {
-		op = name,
+		len = 3,
 		[1] = generic_abs_x_cycle1,
 		[2] = function(cpu)
 			cpu.pc = cpu.pc + 1
@@ -505,9 +551,9 @@ local function wr_abs_y_op(name, value_cb)
 	}
 end
 
-local function rd_abs_y_op(name, prep_cb, process_cb)
+local function rd_abs_y_op(prep_cb, process_cb)
 	return {
-		op = name,
+		len = 3,
 		[1] = generic_abs_y_cycle1,
 		[2] = load_abs_y_cycle2,
 		[3] = function(cpu)
@@ -535,9 +581,9 @@ end
 -- Most (all?) operations do some status flag update,
 -- which is done through the prep callback in cycle 3.
 -- Operations: ASL, LSR, ROL, ROR
-local function rmw_abs_op(name, prep_cb, process_cb)
+local function rmw_abs_op(prep_cb, process_cb)
 	return {
-		op = name,
+		len = 3,
 		[1] = generic_abs_cycle1,
 		[2] = function(cpu)
 			cpu.pc = cpu.pc + 1
@@ -568,9 +614,9 @@ end
 -- Most (all?) operations do some status flag update,
 -- which is done through the prep callback in cycle 3.
 -- Operations: ASL, LSR, ROL, ROR
-local function rmw_abs_x_op(name, prep_cb, process_cb)
+local function rmw_abs_x_op(prep_cb, process_cb)
 	return {
-		op = name,
+		len = 3,
 		[1] = generic_abs_cycle1,
 		[2] = function(cpu)
 			cpu.pc = cpu.pc + 1
@@ -607,9 +653,9 @@ end
 -- Most (all?) operations do some status flag update,
 -- which is done through the prep callback in cycle 3.
 -- Operations: ASL, LSR, ROL, ROR
-local function rmw_impl_op(name, prep_cb, process_cb)
+local function rmw_impl_op(prep_cb, process_cb)
 	return {
-		op = name,
+		len = 1,
 		[1] = function(cpu)
 			if prep_cb then
 				prep_cb(cpu, cpu.a)
@@ -627,9 +673,9 @@ end
 -- Most (all?) operations do some status flag update,
 -- which is done through the prep callback in cycle 3.
 -- Operations: ASL, LSR, ROL, ROR
-local function rmw_immediate_op(name, prep_cb, process_cb)
+local function rmw_immediate_op(prep_cb, process_cb)
 	return {
-		op = name,
+		len = 2,
 		[1] = function(cpu)
 			cpu.pc = cpu.pc + 1
 			cpu.adr = cpu.pc
@@ -646,11 +692,58 @@ local function rmw_immediate_op(name, prep_cb, process_cb)
 	}
 end
 
+local function wr_zp_x_op(value_cb)
+	return {
+		len = 2,
+		[1] = function(cpu)
+			cpu.pc = cpu.pc + 1
+			cpu.adr = cpu.data
+			cpu.tcu = 2
+		end,
+		[2] = function(cpu)
+			cpu.adr = mask_byte(cpu.adr + cpu.x)
+			cpu.read = false
+			cpu.data = value_cb(cpu)
+			cpu.tcu = 3
+		end,
+		[3] = function(cpu)
+			cpu.adr = cpu.pc
+			cpu.read = true
+			cpu.tcu = 0
+		end,
+		[0] = prepare_next_op,
+	}
+end
+
+local function wr_zp_op(value_cb)
+	return {
+		len = 2,
+		[1] = function(cpu)
+			cpu.pc = cpu.pc + 1
+			cpu.adr = cpu.data
+			cpu.read = false
+			cpu.data = value_cb(cpu)
+			cpu.tcu = 2
+		end,
+		[2] = function(cpu)
+			cpu.adr = cpu.pc
+			cpu.read = true
+			cpu.tcu = 0
+		end,
+		[0] = prepare_next_op,
+	}
+end
+
+
+---
+--- Operations
+---
 
 -- BNE, BEQ, BVS, BVC,
-local function branchop(name, condition_cb)
+local function branchop(mnemonic, condition_cb)
 	return {
-		op = name,
+		mnemonic = mnemonic,
+		len = 2,
 
 		[1] = function(cpu)
 			cpu.BRANCH_OPERAND = byte_as_i8(cpu.data) -- FIXME
@@ -696,9 +789,11 @@ local function branchop(name, condition_cb)
 end
 
 -- PHA, PHP
-local function pushop(name, value_cb)
+local function pushop(mnemonic, value_cb)
 	return {
-		op = name,
+		mnemonic = mnemonic,
+		len = 1,
+
 		[1] = function(cpu)
 			cpu.adr = 0x100 + cpu.sp
 			cpu.data = value_cb(cpu)
@@ -716,9 +811,11 @@ local function pushop(name, value_cb)
 end
 
 -- PLA, PLP
-local function pull_op(name, setter_cb)
+local function pull_op(mnemonic, setter_cb)
 	return {
-		op = name,
+		mnemonic = mnemonic,
+		len = 1,
+
 		[1] = function(cpu)
 			cpu.adr = 0x100 + cpu.sp
 			cpu.tcu = 2
@@ -737,77 +834,6 @@ local function pull_op(name, setter_cb)
 		end,
 		[0] = prepare_next_op,
 	}
-end
-
-
--- STA, STX, STY: zero-page
-local function store_zp_op(name, value_cb)
-	return {
-		op = name,
-		[1] = function(cpu)
-			cpu.pc = cpu.pc + 1
-			cpu.adr = cpu.data
-			cpu.read = false
-			cpu.data = value_cb(cpu)
-			cpu.tcu = 2
-		end,
-		[2] = function(cpu)
-			cpu.adr = cpu.pc
-			cpu.read = true
-			cpu.tcu = 0
-		end,
-		[0] = prepare_next_op,
-	}
-end
-
-local function wr_zp_x_op(name, value_cb)
-	return {
-		op = name,
-		[1] = function(cpu)
-			cpu.pc = cpu.pc + 1
-			cpu.adr = cpu.data
-			cpu.tcu = 2
-		end,
-		[2] = function(cpu)
-			cpu.adr = mask_byte(cpu.adr + cpu.x)
-			cpu.read = false
-			cpu.data = value_cb(cpu)
-			cpu.tcu = 3
-		end,
-		[3] = function(cpu)
-			cpu.adr = cpu.pc
-			cpu.read = true
-			cpu.tcu = 0
-		end,
-		[0] = prepare_next_op,
-	}
-end
-
--- STA, STX, STY: absolute
-local function store_abs_op(name, value_cb)
-	return {
-		op = name,
-		[1] = generic_abs_cycle1,
-		[2] = function(cpu)
-			cpu.pc = cpu.pc + 1
-			cpu.adr = word(cpu.LOW_BYTE, cpu.data)
-			cpu.read = false
-			cpu.data = value_cb(cpu)
-			cpu.tcu = 3
-		end,
-		[3] = function(cpu)
-			cpu.adr = cpu.pc
-			cpu.read = true
-			cpu.tcu = 0
-		end,
-		[0] = prepare_next_op,
-	}
-end
-
-local function read_zp_cycle1(cpu)
-	cpu.pc = cpu.pc + 1
-	cpu.adr = cpu.data
-	cpu.tcu = 2
 end
 
 -- LDA, LDX, LDY: zero-page
@@ -881,10 +907,6 @@ local function cmp_abs_op(name, value_cb)
 end
 
 local function asl_op(addr_fun)
-	return {
-		mnemonic = "ASL",
-
-	}
 	return addr_fun(
 		"ASL",
 		nil,
@@ -977,14 +999,17 @@ local function and_op(addr_fun)
 end
 
 local function ora_op(addr_fun)
-	return merge({
-		("name"): "ORA"
-	}, addr_fun(
-		nil,
-		function(cpu, val)
-			return cpu:exec_load(bit.bor(cpu.a, val))
-		end
-	)})
+	return merge(
+		{
+			mnemonic = "ORA"
+		},
+		addr_fun(
+			nil,
+			function(cpu, val)
+				return cpu:exec_load(bit.bor(cpu.a, val))
+			end
+		)
+	)
 end
 
 local function eor_op(addr_fun)
@@ -1244,7 +1269,7 @@ local function dec_y(cpu)
 	update_flags(cpu, cpu.y)
 end
 
-interrupt_sequence = {
+local interrupt_sequence = {
 	[1] = function(cpu)
 		print("INTSEQ 1")
 		cpu.adr = 0x100 + cpu.sp
@@ -1310,6 +1335,23 @@ ADRMODE_ZPG = "zpg"
 ADRMODE_X_IND = "X,ind"
 ADRMODE_ABS = "abs"
 
+local adrmode_meta = {
+	[ADRMODE_ABS_X] = { rd = rd_abs_x_op, wr = wr_abs_x_op },
+	[ADRMODE_ABS_Y] = { rd = rd_abs_y_op, wr = wr_abs_y_op },
+	[ADRMODE_IMPL] = { rd = nil, wr = nil },
+	[ADRMODE_ZPG_X] = { rd = rd_zp_x_op, wr = wr_zp_x_op },
+	[ADRMODE_ZPG_Y] = { rd = rd_zp_y_op, wr = nil },
+	[ADRMODE_IND_Y] = { rd = rd_ind_y_op, wr = wr_ind_y_op },
+	[ADRMODE_REL] = { rd = nil, wr = nil },
+	[ADRMODE_IND] = { rd = nil, wr = nil },
+	[ADRMODE_IMMEDIATE] = { rd = nil, wr = nil },
+	[ADRMODE_ACC] = { rd = nil, wr = nil },
+	[ADRMODE_ZPG] = { rd = rd_zp_op, wr = nil },
+	[ADRMODE_X_IND] = { rd = rd_x_ind_op, wr = wr_x_ind_op },
+	[ADRMODE_ABS] = { rd = rd_abs_op, wr = nil }
+}
+
+OP_ASL = "ASL"
 OP_BRK = "BRK"
 OP_ORA = "ORA"
 OP_AND = "AND"
@@ -1359,117 +1401,6 @@ OP_BCC = "BCC"
 OPX_JAM = "JAM"
 OPX_NOP = "NOP"
 OPX_SHY = "SHY"
-
-local function op_metadata(opcode)
-	-- Operations are laid out by a pattern a-b-c, where a is bit 5..7,
-	-- b is bit 2..4 and c is 0..1.
-	-- Ref: https://www.masswerk.at/6502/6502_instruction_set.html#layout
-	local a = bit.band(bit.rshift(opcode, 5), 7)
-	local b = bit.band(bit.rshift(opcode, 2), 7)
-	local c = bit.band(opcode, 3)
-
-	local y_exception = (c == 2 or c == 3) and (a == 4 or a == 5)
-
-	-- Determine addressing mode
-	local adrmode = nil
-	if b == 7 then
-		adrmode = (y_exception and ADRMODE_ABS_Y) or ADRMODE_ABS_X
-	elseif b == 6 then
-		adrmode = ((c == 0 or c == 2) and ADRMODE_IMPL) or ADRMODE_ABS_Y
-	elseif b == 5 then
-		adrmode = (y_exception and ADRMODE_ZPG_Y) or ADRMODE_ZPG_X
-	elseif b == 4 then
-		adrmode = ((c == 0 or c == 2) and ADRMODE_REL) or ADRMODE_IND_Y
-	elseif b == 3 then
-		adrmode = (opcode == 0x6C and ADRMODE_IND) or ADRMODE_ABS
-	elseif b == 2 then
-		if c == 2 and b < 4 then
-			adrmode = ADRMODE_ACC
-		else
-			adrmode = ((c == 0 or c == 2) and ADRMODE_IMPL) or ADRMODE_IMMEDIATE
-		end
-	elseif b == 1 then
-		adrmode = ADRMODE_ZPG
-	else
-		if c == 1 or c == 3 then
-			adrmode = ADRMODE_X_IND
-		elseif opcode == 0x00 or opcode == 0x40 or opcode == 0x60 then
-			adrmode = ADRMODE_IMPL
-		elseif opcode == 0x20 then
-			adrmode = ADRMODE_ABS
-		else
-			adrmode = ADRMODE_IMMEDIATE
-		end
-	end
-
-	-- Operands based on c, a, b grouping
-	local opgrid = zero_based {
-		{
-			{ OP_BRK,  OPX_NOP, OP_PHP, OPX_NOP, OP_BPL, OPX_NOP, OP_CLC, OPX_NOP },
-			{ OP_JSR,  OP_BIT,  OP_PLP, OP_BIT,  OP_BMI, OPX_NOP, OP_SEC, OPX_NOP },
-			{ OP_RTI,  OPX_NOP, OP_PHA, OP_JMP,  OP_BVC, OPX_NOP, OP_CLI, OPX_NOP },
-			{ OP_RTS,  OPX_NOP, OP_PLA, OP_JMP,  OP_BVS, OPX_NOP, OP_SEI, OPX_NOP },
-			{ OPX_NOP, OP_STY,  OP_DEY, OP_STY,  OP_BCC, OP_STY,  OP_TYA, OPX_SHY },
-			{ OP_LDY,  OP_LDY,  OP_TAY, OP_LDY,  OP_BCS, OP_LDY,  OP_CLV, OP_LDY },
-			{ OP_CPY,  OP_CPY,  OP_INY, OP_CPY,  OP_BNE, OPX_NOP, OP_CLD, OPX_NOP },
-			{ OP_CPX,  OP_CPX,  OP_INX, OP_CPX,  OP_BEQ, OPX_NOP, OP_SED, OPX_NOP }
-		}
-	}
-
-
-	-- Determine operation
-	local op = nil
-
-	if c == 0 then
-		if opcode == 0 then
-			op = OP_BRK
-		end
-	elseif c == 1 then
-		if a == 0 then
-			op = OP_ORA
-		elseif a == 1 then
-			op = OP_AND
-		elseif a == 2 then
-			op = OP_EOR
-		elseif a == 3 then
-			op = OP_ADC
-		elseif a == 4 then
-			op = (opcode == 0x89 and OP_NOP) or OP_STA
-		elseif a == 5 then
-			op = OP_LDA
-		elseif a == 6 then
-			op = OP_CMP
-		elseif a == 7 then
-			op = OP_SBC
-		end
-	elseif c == 2 then
-		if b == 4 then
-			op = OPX_JAM
-		end
-	elseif c == 3 then
-
-	end
-
-	return {
-		adrmode = adrmode,
-		op = op
-	}
-end
-
--- TODO: This and Cpu6502.instructions contain redundant data.
---       Generate Cpu6502.instructions based on the metadata!
-local function generate_instructions()
-	local all = {}
-
-	for opcode = 0, 255 do
-		all[op] = op_metadata(opcode)
-	end
-
-	return all
-end
-
-print(generate_instructions())
-os.exit(0)
 
 Cpu6502.instructions = {
 	-- 0x00: BRK
@@ -1833,15 +1764,10 @@ Cpu6502.instructions = {
 	[0x7E] = ror_op(rmw_abs_x_op),
 
 	[0x81] = sta_op(wr_x_ind_op),
-	-- 0x81: STA (X-indexed, indirect)
-	-- 0x84: STA (zero-page)
-	[0x84] = store_zp_op("STY", get_y),
 
-	-- 0x85: STA (zero-page)
-	[0x85] = store_zp_op("STA", get_a),
-
-	-- 0x86: STX (zero-page)
-	[0x86] = store_zp_op("STX", get_x),
+	[0x84] = sty_op(wr_zp_op),
+	[0x85] = sta_op(wr_zp_op),
+	[0x86] = stx_op(wr_zp_op),
 
 	-- 0x88: DEY (implied)
 	-- Decrement Y
@@ -1866,22 +1792,14 @@ Cpu6502.instructions = {
 		[0] = prepare_next_op,
 	},
 
-	-- 0x8C: STY (absolute)
-	[0x8C] = store_abs_op("STY", get_y),
+	[0x8C] = sty_op(wr_abs_op),
+	[0x8D] = sta_op(wr_abs_op),
+	[0x8E] = stx_op(wr_abs_op),
 
-	-- 0x8D: STA (absolute)
-	[0x8D] = store_abs_op("STA", get_a),
-
-	-- 0x8E: STX (absolute)
-	[0x8E] = store_abs_op("STX", get_x),
-
-	-- 0x90: BCC (relative)
-	-- Branch on Carry Clear
 	[0x90] = branchop("BCC", function(cpu) return not cpu.p.c end),
 
 	[0x91] = sta_op(wr_ind_y_op),
 	[0x94] = sty_op(wr_zp_x_op),
-	[0x95] = sta_op(wr_zp_x_op),
 	[0x95] = sta_op(wr_zp_x_op),
 	[0x96] = stx_op(wr_zp_ind_op),
 
@@ -1928,16 +1846,9 @@ Cpu6502.instructions = {
 		[0] = prepare_next_op,
 	},
 
-	-- 0xA4: LDY (zero-page)
-	[0xA4] = load_zp_op("LDY", set_y),
-
-	-- 0xA5: LDA (zero-page)
-	-- Load A from memory
-	[0xA5] = load_zp_op("LDA", function(cpu, val) cpu.a = val end),
-
-	-- 0xA6: LDX (zero-page)
-	-- Load X from memory
-	[0xA6] = load_zp_op("LDX", function(cpu, val) cpu.x = val end),
+	[0xA4] = ldy_op(rd_zp_op),
+	[0xA5] = lda_op(rd_zp_op),
+	[0xA6] = ldx_op(rd_zp_op),
 
 	-- 0xA8: TAY (implied)
 	-- Copy (transfer) A to X
@@ -1951,12 +1862,7 @@ Cpu6502.instructions = {
 		[0] = prepare_next_op,
 	},
 
-	-- 0xA9: LDA d8
-	[0xA9] = {
-		op = "LDA",
-		[1] = store_data_in_a,
-		[0] = prepare_next_op,
-	},
+	[0xA9] = lda_op(rd_immediate_op),
 
 	-- 0xAA: TAX (implied)
 	-- Copy (transfer) A to X
@@ -2183,3 +2089,149 @@ Cpu6502.instructions = {
 	[0xFD] = sbc_op(rd_abs_x_op),
 	[0xFE] = inc_op(rmw_abs_x_op),
 }
+
+local function op_metadata(opcode)
+	-- Operations are laid out by a pattern a-b-c, where a is bit 5..7,
+	-- b is bit 2..4 and c is 0..1.
+	-- Ref: https://www.masswerk.at/6502/6502_instruction_set.html#layout
+	local a = bit.band(bit.rshift(opcode, 5), 7)
+	local b = bit.band(bit.rshift(opcode, 2), 7)
+	local c = bit.band(opcode, 3)
+
+	-- Determine addressing mode
+	local y_exception = (c == 2 or c == 3) and (a == 4 or a == 5)
+	local adrmode = nil
+	if b == 7 then
+		adrmode = (y_exception and ADRMODE_ABS_Y) or ADRMODE_ABS_X
+	elseif b == 6 then
+		adrmode = ((c == 0 or c == 2) and ADRMODE_IMPL) or ADRMODE_ABS_Y
+	elseif b == 5 then
+		adrmode = (y_exception and ADRMODE_ZPG_Y) or ADRMODE_ZPG_X
+	elseif b == 4 then
+		adrmode = ((c == 0 or c == 2) and ADRMODE_REL) or ADRMODE_IND_Y
+	elseif b == 3 then
+		adrmode = (opcode == 0x6C and ADRMODE_IND) or ADRMODE_ABS
+	elseif b == 2 then
+		if c == 2 and b < 4 then
+			adrmode = ADRMODE_ACC
+		else
+			adrmode = ((c == 0 or c == 2) and ADRMODE_IMPL) or ADRMODE_IMMEDIATE
+		end
+	elseif b == 1 then
+		adrmode = ADRMODE_ZPG
+	else
+		if c == 1 or c == 3 then
+			adrmode = ADRMODE_X_IND
+		elseif opcode == 0x00 or opcode == 0x40 or opcode == 0x60 then
+			adrmode = ADRMODE_IMPL
+		elseif opcode == 0x20 then
+			adrmode = ADRMODE_ABS
+		else
+			adrmode = ADRMODE_IMMEDIATE
+		end
+	end
+
+	-- Operands based on c, a, b grouping
+	local opgrid = zb {
+		zb {
+			zb { OP_BRK, OPX_NOP, OP_PHP, OPX_NOP, OP_BPL, OPX_NOP, OP_CLC, OPX_NOP },
+			zb { OP_JSR, OP_BIT, OP_PLP, OP_BIT, OP_BMI, OPX_NOP, OP_SEC, OPX_NOP },
+			zb { OP_RTI, OPX_NOP, OP_PHA, OP_JMP, OP_BVC, OPX_NOP, OP_CLI, OPX_NOP },
+			zb { OP_RTS, OPX_NOP, OP_PLA, OP_JMP, OP_BVS, OPX_NOP, OP_SEI, OPX_NOP },
+			zb { OPX_NOP, OP_STY, OP_DEY, OP_STY, OP_BCC, OP_STY, OP_TYA, OPX_SHY },
+			zb { OP_LDY, OP_LDY, OP_TAY, OP_LDY, OP_BCS, OP_LDY, OP_CLV, OP_LDY },
+			zb { OP_CPY, OP_CPY, OP_INY, OP_CPY, OP_BNE, OPX_NOP, OP_CLD, OPX_NOP },
+			zb { OP_CPX, OP_CPX, OP_INX, OP_CPX, OP_BEQ, OPX_NOP, OP_SED, OPX_NOP }
+		},
+		zb {
+			map_range(8, OP_ORA),
+			map_range(8, OP_AND),
+			map_range(8, OP_EOR),
+			map_range(8, OP_ADC),
+			map_range(8, function(i) return (i == 2 and OP_NOP) or OP_STA end),
+			map_range(8, OP_LDA),
+			map_range(8, OP_CMP),
+			map_range(8, OP_SBC),
+		},
+		zb {
+			zb { OPX_JAM, OP_ASL, OP_ASL, OP_ASL, OPX_JAM, OP_ASL, OP_NOP, OP_ASL },
+			zb { OPX_JAM, OP_ROL, OP_ROL, OP_ROL, OPX_JAM, OP_ROL, OP_NOP, OP_ROL },
+			zb { OPX_JAM, OP_LSR, OP_LSR, OP_LSR, OPX_JAM, OP_LSR, OP_NOP, OP_LSR },
+			zb { OPX_JAM, OP_ROR, OP_ROR, OP_ROR, OPX_JAM, OP_ROR, OP_NOP, OP_ROR },
+			zb { OPX_NOP, OP_STX, OP_TXA, OP_STX, OPX_JAM, OP_STX, OP_TXS, OPX_SHX },
+			zb { OPX_LDX, OP_LDX, OP_TAX, OP_LDX, OPX_JAM, OP_LDX, OP_TSX, OP_LDX },
+			zb { OPX_NOP, OP_DEC, OP_DEC, OP_DEC, OPX_JAM, OP_DEC, OP_NOP, OP_DEC },
+			zb { OPX_NOP, OP_INC, OP_NOP, OP_INC, OPX_JAM, OP_INC, OP_NOP, OP_INC },
+		},
+		zb {
+			zb { OPX_SLO, OPX_SLO, OPX_ANC, OPX_SLO, OPX_SLO, OPX_SLO, OPX_SLO, OPX_SLO },
+			zb { OPX_RLA, OPX_RLA, OPX_ANC, OPX_RLA, OPX_RLA, OPX_RLA, OPX_RLA, OPX_RLA },
+			zb { OP_SRE, OP_SRE, OPX_ALR, OP_SRE, OP_SRE, OP_SRE, OP_SRE, OP_SRE },
+			zb { OPX_RRA, OPX_RRA, OPX_ARR, OPX_RRA, OPX_RRA, OPX_RRA, OPX_RRA, OPX_RRA },
+			zb { OPX_SAX, OPX_SAX, OPX_ANE, OPX_SAX, OPX_SHA, OPX_SAX, OPX_TAS, OPX_SHA },
+			zb { OPX_LAX, OPX_LAX, OPX_LXA, OPX_LAX, OPX_LAX, OPX_LAX, OPX_LAS, OPX_LAX },
+			zb { OPX_DCP, OPX_DCP, OPX_SBX, OPX_DCP, OPX_DCP, OPX_DCP, OPX_DCP, OPX_DCP },
+			zb { OPX_ISC, OPX_ISC, OPX_USBC, OPX_ISC, OPX_ISC, OPX_ISC, OPX_ISC, OPX_ISC }
+		}
+	}
+
+	local op = opgrid[c][a][b]
+	local meta = nil
+
+	local adr = adrmode_meta[adrmode]
+
+	return {
+		adr = adrmode,
+		op = opgrid[c][a][b]
+	}
+end
+
+-- Generate instruction table. Contains all 256 operations (0..255)
+-- and each operation is defined as:
+--
+-- {
+--   optype: OP_*
+--   adrmode: ADRMODE_*
+--   [1..n]: suboperation per cycle
+--   [0]: supoperation for final cycle
+-- }
+local function generate_instructions()
+	local all = {}
+	local n = 0
+
+	for opcode = 0, 255 do
+		local data = op_metadata(opcode)
+		data = data or Cpu6502.instructions[opcode]
+		if not data then
+			printf("Warning: no definition for op 0x%02x\n", opcode)
+		elseif data.optype == nil then
+			printf("Warning: no op for opcode 0x%02x\n", opcode)
+		elseif data.adrmode == nil then
+			printf("Warning: no adrmode for opcode 0x%02x\n", opcode)
+		else
+			n = n + 1
+		end
+	end
+
+	printf("OK: %d/%d\n", n, 256)
+
+	return all
+end
+
+-- generate_instructions()
+-- os.exit(0)
+--
+local defined_count = 0
+local complete_count = 0
+for opcode = 0, 256 do
+	local meta = Cpu6502.instructions[opcode]
+	if meta ~= nil then
+		defined_count = defined_count + 1
+		if meta.mnemonic and meta.len and meta[0] and meta[1] then
+			complete_count = complete_count + 1
+		end
+	end
+end
+
+printf("Defined: %d. Complete: %d.\n", defined_count, complete_count)
+os.exit(0)
