@@ -52,6 +52,10 @@ function inc_byte(b)
 	return bit.band(b + 1, 0xFF)
 end
 
+function dec_byte(b)
+	return bit.band(b - 1, 0xFF)
+end
+
 function byte_as_i8(b)
 	validate_u8(b)
 	if bit7(b) then
@@ -178,10 +182,10 @@ end
 
 function merge(a, b)
 	m = {}
-	for k, v in ipairs(a) do
+	for k, v in pairs(a) do
 		m[k] = v
 	end
-	for k, v in ipairs(b) do
+	for k, v in pairs(b) do
 		m[k] = v
 	end
 	return m
@@ -227,4 +231,38 @@ function zb(tbl)
 	end
 
 	return ztbl
+end
+
+function trim(s)
+	return (s:gsub("^%s*(.-)%s*$", "%1"))
+end
+
+function parse_number(str)
+	str = trim(str)
+
+	if str:sub(1, 1) == "$" then
+		return tonumber(str:sub(2), 16)
+	elseif str:sub(1, 2) == "0x" or str:sub(1, 2) == "0X" then
+		return tonumber(str:sub(3), 16)
+	else
+		return tonumber(str)
+	end
+end
+
+function find(lst, predicate)
+	for i, v in ipairs(lst) do
+		if predicate(v) then
+			return v
+		end
+	end
+	return nil
+end
+
+function split(str, sep)
+	local result = {}
+	sep = sep or "%s+"
+	for part in str:gmatch("[^" .. sep .. "]+") do
+		table.insert(result, part)
+	end
+	return result
 end

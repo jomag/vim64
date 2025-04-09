@@ -43,6 +43,16 @@ function TestMachine:step()
 			if bit_set(self.cpu.data, 0) then
 				printf("Interrupt Request (0x%04X = %02X)\n", self.cpu.adr, self.cpu.data)
 				self.cpu.int = true
+			else
+				self.cpu.int = false
+			end
+
+			if bit_set(self.cpu.data, 1) then
+				printf("-------- !!!! NMI !!!! @$%04x, %02x, --------\n", self.cpu.op_adr, self.cpu.data)
+				print("Previous NMI: ", self.cpu.nmi)
+				self.cpu.nmi = true
+			else
+				self.cpu.nmi = false
 			end
 		end
 		self.ram[self.cpu.adr] = self.cpu.data
@@ -63,37 +73,46 @@ local function run_klaus_dormann_interrupt_test()
 	local m = TestMachine:new("as64/6502_interrupt_test.bin", 10)
 	m.cpu:reset_sequence(0x400, m:inspect(0x400))
 
-	-- Start address of current instruction
-	local instr_adr = 0
+	-- Remember address of previous operation to detect when trapped
+	local prev_adr = 0
 
 	-- How many times we've looped back to same instruction
 	local trap_counter = 0
 
-	dbg:break_at(0x465)
+	dbg:break_at(0x400)
+	dbg:break_at(0x6e1)
+	-- dbg:break_at(0x444)
+	-- dbg:break_at(0x465)
+	-- dbg:break_at(0x544)
+	-- dbg:break_at(0x52C)
+	dbg:break_at(0x5C7)
+	-- dbg:break_at(0x07C2)
+	-- dbg:break_at(0x077c)
+	-- dbg:break_at(0x077d)
+	-- dbg:break_at(0x07c3)
+	-- dbg:break_at(0x07c4)
 
 	while m.cpu.pc ~= target_adr do
-		if m.cpu.tcu == 1 then
-			-- Detect traps
-			if m.cpu.adr == instr_adr then
-				trap_counter = trap_counter + 1
-				if trap_counter > 10 then
-					printf("Trapped at 0x%04x\n", instr_adr)
-					return
-				end
-			else
-				instr_adr = m.cpu.adr
-				trap_counter = 0
+		-- Detect traps
+		if prev_adr == m.cpu.op_adr then
+			trap_counter = trap_counter + 1
+			if trap_counter > 100 then
+				printf("Trapped at 0x%04x\n", prev_adr)
+				dbg:stop()
 			end
+		else
+			prev_adr = m.cpu.op_adr
+			trap_counter = 0
+		end
 
-			dbg:update(m.cpu)
-			if dbg.stopped then
-				dbg:prompt(m.cpu, m)
-			end
+		dbg:update(m.cpu, m)
+		if dbg.stopped then
+			dbg:prompt(m.cpu, m)
 		end
 
 		m:step()
 
-		if m.cpu.cycle % 10000 == 0 then
+		if m.cpu.cycle % 10000 == 0 and false then
 			printf("Cycle %d, PC: %04x, IR: %02x, INTH: %s\n",
 				m.cpu.cycle, m.cpu.pc, m.cpu.ir,
 				tostring(m.cpu.TMP_HACK_INT_TCU))
@@ -107,7 +126,7 @@ local function run_test_until_address_reached(rom_path, target_adr)
 	local prev_adr = -1
 	local trap_count = 0
 	local function detect_trap(cpu)
-		if cpu.tcu == 1 then
+		if cpu.op_cycle == 1 then
 			local adr = cpu.pc - 1
 			if adr == prev_adr then
 				trap_count = trap_count + 1
@@ -137,6 +156,8 @@ local function run_test_until_address_reached(rom_path, target_adr)
 			printf("Cycle %d, PC: %04x\n", m.cpu.cycle, m.cpu.pc)
 		end
 	end
+
+	printf("End at %04x\n", m.cpu.pc)
 end
 
 local function run_test_with_validation(rom_path, expect_path, cycles)
@@ -225,7 +246,10 @@ local function run_test_with_validation(rom_path, expect_path, cycles)
 			end
 		end
 
-		-- print(tostring(machine.cpu.cycle) .. ": " .. machine.cpu:format_state() .. " " .. machine.cpu:format_internals())
+		if machine.cpu.cycle % 10000 == 0 then
+			print(tostring(machine.cpu.cycle) ..
+				": " .. machine.cpu:format_state() .. " " .. machine.cpu:format_internals())
+		end
 
 		if not compare_states(machine, exp, exp_line) then
 			print("Test failed.")
@@ -237,10 +261,12 @@ local function run_test_with_validation(rom_path, expect_path, cycles)
 	end
 end
 
-run_klaus_dormann_interrupt_test()
+if true then
+	run_klaus_dormann_interrupt_test()
+end
 
 if false then
-	run_test_until_address_reached("6502_functional_test.bin", 0x1113477)
+	run_test_until_address_reached("6502_functional_test.bin", 0x3469)
 end
 
 if false then

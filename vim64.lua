@@ -49,7 +49,7 @@ local function emulate(machine, cycles, breakpoint)
 		-- printf("%s %s\n", cpu:format_state(), cpu:format_internals())
 
 		if step_debug then --  and cpu.tcu == 0 then
-			printf("Cycle %d, TCU: %d\n", cpu.cycle, machine.cpu.tcu)
+			printf("Cycle %d, OpCycle: %d\n", cpu.cycle, machine.cpu.op_cycle)
 			printf("%s %s\n", cpu:format_state(), cpu:format_internals())
 
 			while true do

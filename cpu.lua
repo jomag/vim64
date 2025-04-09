@@ -22,7 +22,6 @@ function Cpu6502:new()
 		p = {
 			n = false,  -- Negative
 			o = false,  -- Overflow
-			b = false,  -- B-flag
 			d = false,  -- Decimal
 			i = false,  -- Interrupt Disable
 			z = false,  -- Zero
@@ -35,10 +34,13 @@ function Cpu6502:new()
 		-- Special values: -1 = Interrupt sequence, -2 = NMI sequence
 		ir = 0,
 
+		-- Address to the current operation (PC when IR was set)
+		op_adr = nil,
+
 		-- Time Control Unit
 		-- Contains the subcycle of current instruction execution.
 		-- Resets to zero for each new instruction.
-		tcu = 0,
+		op_cycle = 0,
 
 		-- Cycle count since reset
 		cycle = 0,
@@ -56,8 +58,18 @@ function Cpu6502:new()
 		-- Bus data pins
 		data = 0,
 
-		-- Interrupt pin (input). True on interrupt.
+		-- Interrupt pin (input). True on interrupt request.
 		int = false,
+
+		-- Non-Maskable Interrupt pin (input). Triggers
+		-- interrupt on false-to-true edge.
+		nmi = true,
+
+		-- Previous state of NMI
+		nmi_previous = true,
+
+		-- Points at the instructions for this specific CPU
+		instructions = INSTRUCTIONS_6502
 	}
 
 	setmetatable(cpu, self)
@@ -70,7 +82,6 @@ function Cpu6502:get_p()
 	p = bit.bor(p, self.p.n and 128 or 0)
 	p = bit.bor(p, self.p.o and 64 or 0)
 	p = bit.bor(p, self.p.ignored_bit and 32 or 0)
-	p = bit.bor(p, self.p.b and 16 or 0)
 	p = bit.bor(p, self.p.d and 8 or 0)
 	p = bit.bor(p, self.p.i and 4 or 0)
 	p = bit.bor(p, self.p.z and 2 or 0)
@@ -81,7 +92,6 @@ end
 function Cpu6502:set_p(v)
 	self.p.n = bit.band(v, 128) ~= 0
 	self.p.o = bit.band(v, 64) ~= 0
-	self.p.b = bit.band(v, 16) ~= 0
 	self.p.d = bit.band(v, 8) ~= 0
 	self.p.i = bit.band(v, 4) ~= 0
 	self.p.z = bit.band(v, 2) ~= 0
@@ -118,8 +128,8 @@ function Cpu6502:reset_sequence(start_address, preload_data_hack)
 		self.pc = start_address
 	end
 	self.sp = 0xBD
-	self.ir = 0
-	self.tcu = 0
+	self:prepare_op(0, start_address)
+	self.op_cycle = 0
 	self.cycle = 0
 	self.adr = self.pc
 
@@ -131,7 +141,6 @@ function Cpu6502:reset_sequence(start_address, preload_data_hack)
 
 	self.p.z = true
 	self.p.i = true
-	self.p.b = true
 end
 
 function Cpu6502.format_state(self, style)
@@ -141,23 +150,19 @@ function Cpu6502.format_state(self, style)
 
 	local instr = self.instructions[self.ir]
 
-	-- print("A:", self.a)
-	-- print("X:", self.x)
-	-- print("Y:", self.y)
-
 	return string.format(
 		"A:%02x X:%02x Y:%02x SP:%02x IR:%02x PC:%04x OP:%s P:%02x %s",
 		self.a, self.x, self.y,
 		self.sp, self.ir,
 		self.pc,
-		(instr and instr.op) or "-",
+		(instr and instr.mnemonic) or "-",
 		self:get_p(),
 		(self.read and "rd") or "wr")
 end
 
 function Cpu6502:format_internals()
 	return string.format(
-		"ADR:%02x DATA:%02x TCU:%d", self.adr, self.data, self.tcu)
+		"ADR:%02x DATA:%02x CYCLE:%d", self.adr, self.data, self.op_cycle)
 end
 
 function Cpu6502:step()
@@ -166,21 +171,26 @@ function Cpu6502:step()
 	-- On interrupt, the CPU will wait until current instruction
 	-- has finished before invoking the interrupt handler.
 	-- TODO: handle the exception from this rule: the BRK instruction.
-	--
 	if self.int and self.p.i then
-		print("INT still requesting, but I-flag high and tcu:", self.tcu, self.ir)
+		print("INT still requesting, but I-flag high and subcycle:", self.op_cycle, self.ir)
 	end
 
-	if self.int and not self.p.i and self.tcu == 1 then
-		print("TRIGGER!")
-		self.p.i = true
-		self.p.b = false
+	if self.int and not self.p.i and self.op_cycle == 1 then
+		print("Trigger IRQ!")
 		self.ir = -1
 	end
 
+	if self.nmi ~= self.nmi_previous and self.op_cycle == 1 then
+		print("Trigger NMI!")
+		if self.nmi then
+			self.ir = -2
+		end
+		self.nmi_previous = self.nmi
+	end
+
 	local instr = self.instructions[self.ir]
-	if self.ir == -1 then
-		instr = interrupt_sequence
+	if self.ir < 0 then
+		instr = INTERRUPT_SEQUENCE
 	end
 
 	if instr == nil then
@@ -188,7 +198,12 @@ function Cpu6502:step()
 		return
 	end
 
-	instr[self.tcu](self)
+	instr[self.op_cycle](self)
+end
+
+function Cpu6502:prepare_op(opcode, adr)
+	self.ir = opcode
+	self.op_adr = adr
 end
 
 require "cpu_6502_instr"
