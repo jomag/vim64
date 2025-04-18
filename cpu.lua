@@ -34,11 +34,20 @@ function Cpu6502:new()
 		-- Special values: -1 = Interrupt sequence, -2 = NMI sequence
 		ir = 0,
 
-		-- Interrupt state
+		-- Interrupt state (OLD! SEE BELOW)
 		-- Valid values:
 		--    "irq", "nmi", "brk",
 		--    "irq_pending", "nmi_pending"
 		int_state = nil,
+
+		-- True if there is an interrupt pending to happen, which means
+		-- the interrupt handler will be called when current operation
+		-- has finished executing.
+		int_pending = false,
+
+		-- Vector for the interrupt currently being handled
+		-- 0xFFFA/0xFFFB for NMI, 0xFFFE/0xFFFF for IRQ+BRK
+		int_vector = nil,
 
 		-- Address to the current operation (PC when IR was set)
 		op_adr = nil,
@@ -71,6 +80,9 @@ function Cpu6502:new()
 		-- interrupt on false-to-true edge.
 		nmi = true,
 
+		-- Set to true when NMI edge detected
+		nmi_edge_detected = false,
+
 		-- Previous state of NMI
 		nmi_previous = true,
 
@@ -90,9 +102,9 @@ function Cpu6502:get_p()
 	-- TODO: make more efficient by setting B on state change instead
 	--       of calculating it on every call to get_p() ...
 	local b = 16
-	if self.int_state ~= nil then
+	if self.int_state ~= nil or self.int_pending then
 		if not self.brk_contaminated then
-			if self.int_state == "irq_pending" or self.int_state == "nmi_pending" then
+			if self.int_pending then
 				b = 0
 			elseif self.int_state == "irq" and self.op_cycle < 5 then
 				b = 0
@@ -202,34 +214,36 @@ function Cpu6502:step()
 		self.brk_contaminated = self.data == 0
 	end
 
-	if self.irq and (self.int_state == nil or self.int_state == "nmi_pending" or self.int_state == "irq_pending") and not self.p.i then
-		self.int_state = "irq_pending"
+	if self.irq and self.int_state == nil and not self.p.i then
+		self.int_pending = "irq" -- fixme: intention is for this to be bool ...
 		if self.op_cycle == instr_cycles - 1 then
 			self.int_state = "irq"
+			self.int_pending = false
+			self.int_vector = 0xFFFE
 		end
 	end
 
 	if self.nmi ~= self.nmi_previous then
-		print("COULD BE ------------------------ NMI ----------  <///")
-		printf("   nmi: %s, int_state: %s, op_cycle: %d, instr_cycles: %d, ir: %x\n", tostring(self.nmi),
-			tostring(self.int_state),
-			self.op_cycle, instr_cycles, self.ir)
-
 		if self.nmi then
-			self.int_state = "nmi_pending"
+			self.nmi_edge_detected = true
 		end
+		self.nmi_previous = self.nmi
+	end
 
-		if (self.int_state == nil or self.int_state == "irq_pending" or self.int_state == "nmi_pending") and self.op_cycle == instr_cycles - 1 then
-			print("YESSSS YESSS YESSS!!! ")
-			if self.nmi then
-				self.int_state = "nmi"
+	if self.nmi_edge_detected and self.int_state == nil then
+		self.int_pending = "nmi" -- fixme: should be "true"
+		self.int_vector = 0xFFFA
 
-				-- If BRK happens at the same time as NMI, the BRK
-				-- operation will "contaminate" the B flag.
-				-- https://www.nesdev.org/wiki/Visual6502wiki/6502_BRK_and_B_bit
-				self.brk_contaminated = self.ir == 0
-			end
-			self.nmi_previous = self.nmi
+		if self.int_state == nil and self.op_cycle == instr_cycles - 1 then
+			self.nmi_edge_detected = false
+			self.int_state = "nmi"
+			self.int_pending = false
+			self.int_vector = 0xFFFA
+
+			-- If BRK happens at the same time as NMI, the BRK
+			-- operation will "contaminate" the B flag.
+			-- https://www.nesdev.org/wiki/Visual6502wiki/6502_BRK_and_B_bit
+			self.brk_contaminated = self.ir == 0
 		end
 	end
 
@@ -246,11 +260,9 @@ function Cpu6502:step()
 
 	if self.op_cycle == 1 and self.int_state ~= nil then
 		if self.int_state == "irq" or self.int_state == "nmi" or self.int_state == "brk" then
-			print(" --- THIS HAPPENS IT REPLACE NEXT OP WITH INT!! p")
 			self.ir = 0
 			self.pc = pc_before
 			self.adr = adr_before
-			-- instr = self.instructions[self.ir]
 		end
 	end
 end

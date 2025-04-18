@@ -131,12 +131,9 @@ function TestMachine:step()
 	else
 		if self.cpu.adr == 0xBFFC then
 			if bit_set(self.cpu.data, 0) then
-				printf("Interrupt Request (0x%04X = %02X)\n", self.cpu.adr, self.cpu.data)
 				self.next_irq = true
-				-- self.cpu.irq = true
 			else
 				self.next_irq = false
-				-- self.cpu.irq = false
 			end
 
 			if bit_set(self.cpu.data, 1) then
@@ -231,12 +228,12 @@ local function run_klaus_dormann_interrupt_test()
 
 	dbg:break_at(0x400)
 	dbg:break_at(0x6e1)
-	dbg:break_at(0x42B)
+	-- dbg:break_at(0x42B)
 	-- dbg:break_at(0x444)
 	-- dbg:break_at(0x465)
 	-- dbg:break_at(0x544)
 	-- dbg:break_at(0x52C)
-	dbg:break_at(0x5C7)
+	-- dbg:break_at(0x5C7)
 	-- dbg:break_at(0x07C2)
 	-- dbg:break_at(0x077c)
 	-- dbg:break_at(0x077d)

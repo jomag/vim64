@@ -187,6 +187,14 @@ function Debugger:format_rich(cpu, bus, event)
 	str = str .. ("Half Cycle: %d   Int State: %s   Op cycle: %d\n"):format(cpu.cycle * 2, cpu.int_state, cpu.op_cycle)
 	str = str .. ("Pins: IRQ: %s   NMI: %s\n\n"):format(tostring(cpu.irq), tostring(cpu.nmi))
 
+	str = str ..
+		("Interrupt status:\n  int state: %s, int pending: %s, int vector: %s, nmi edge: %s\n  brk contaminated: %s\n\n")
+		:format(
+			tostring(cpu.int_state), tostring(cpu.int_pending), tostring(cpu.int_vector),
+			tostring(cpu.nmi_edge_detected),
+			tostring(cpu.brk_contaminated)
+		)
+
 	str = str .. self:format_stack(cpu, bus) .. "\n"
 
 	str = str .. self:format_bus_status(cpu) .. "\n"

@@ -821,8 +821,6 @@ local function brk_op()
 				-- push PC+2 as return address.
 				cpu.int_state = "brk"
 			end
-			print("BRK_OP: cycle 1")
-			printf("Interrupt triggered (%s)\n", cpu.int_state)
 			cpu.adr = 0x100 + cpu.sp
 			if cpu.int_state == "brk" then
 				cpu.pc = cpu.pc + 1
@@ -841,7 +839,6 @@ local function brk_op()
 				-- push PC+2 as return address.
 				cpu.int_state = "brk"
 			end
-			print("BRK_OP: cycle 2")
 			cpu.adr = 0x100 + mask_byte(cpu.sp - 1)
 			if cpu.int_state == "brk" then
 				cpu.data = bit.band(cpu.op_adr + 2, 0xFF)
@@ -852,7 +849,6 @@ local function brk_op()
 			cpu.op_cycle = 3
 		end,
 		[3] = function(cpu)
-			print("BRK_OP: cycle 3")
 			cpu.adr = 0x100 + mask_byte(cpu.sp - 2)
 			-- FIXME: Probably depending on int_state?
 			cpu.data = bit.bor(cpu:get_p(), 0x20)
@@ -860,33 +856,27 @@ local function brk_op()
 			cpu.op_cycle = 4
 		end,
 		[4] = function(cpu)
-			print("BRK_OP: cycle 4")
 			cpu.sp = mask_byte(cpu.sp - 3)
 			cpu.p.i = true
-			if cpu.int_state == "nmi" or cpu.int_state == "nmi_pending" then
-				cpu.adr = 0xFFFA
-			else
-				cpu.adr = 0xFFFE
-			end
+			cpu.adr = cpu.int_vector
 			cpu.read = true
 			cpu.op_cycle = 5
 		end,
 		[5] = function(cpu)
-			print("BRK_OP: cycle 5")
 			cpu.BRK_PCL = cpu.data
-			if cpu.int_state == "nmi" or cpu.int_state == "nmi_pending" then
-				cpu.adr = 0xFFFB
-			else
-				cpu.adr = 0xFFFF
-			end
+			cpu.adr = cpu.int_vector + 1
 			cpu.op_cycle = 6
 		end,
 		[6] = function(cpu)
-			print("BRK_OP: cycle 6")
 			cpu.pc = word(cpu.BRK_PCL, cpu.data)
 			cpu.adr = cpu.pc
 			cpu.op_cycle = 0
 			cpu.int_state = nil
+			cpu.int_pending = false
+
+			-- In case of concurrent BRK and NMI, we need to set
+			-- this to false in case it's handled as a BRK
+			cpu.nmi_edge_detected = false
 		end,
 		[0] = prepare_next_op,
 	}
@@ -898,7 +888,6 @@ local function rti_op()
 		len = 1,
 		adr = ADR_IMPL,
 		[1] = function(cpu)
-			print("\n\nR T I ! ! !\n\n")
 			cpu.pc = cpu.pc + 1
 			cpu.adr = 0x100 + cpu.sp
 			cpu.op_cycle = 2
@@ -909,8 +898,6 @@ local function rti_op()
 		end,
 		[3] = function(cpu)
 			cpu.adr = cpu.adr + 1
-			printf(" - RTI: SETTING P TO: 0x$%02X\n", cpu.data)
-			printf(" - RTI: CPU ADR: %04x\n", cpu.adr)
 			cpu:set_p(cpu.data)
 			cpu.op_cycle = 4
 		end,
