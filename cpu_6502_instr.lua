@@ -814,42 +814,79 @@ local function brk_op()
 		adr = ADR_IMPL,
 		len = 1,
 		[1] = function(cpu)
-			print("BRK instruction reached!")
+			if cpu.int_state ~= "irq" and cpu.int_state ~= "nmi" then
+				-- If int_state is not set to "irq" or "nmi", it means that
+				-- the interrupt sequence was not triggered by an external
+				-- event, so it must be the BRK operation. In that case,
+				-- push PC+2 as return address.
+				cpu.int_state = "brk"
+			end
+			print("BRK_OP: cycle 1")
+			printf("Interrupt triggered (%s)\n", cpu.int_state)
 			cpu.adr = 0x100 + cpu.sp
-			cpu.sp = dec_byte(cpu.sp)
-			cpu.data = upper_byte(cpu.op_adr + 2)
+			if cpu.int_state == "brk" then
+				cpu.pc = cpu.pc + 1
+				cpu.data = upper_byte(cpu.op_adr + 2)
+			else
+				cpu.data = upper_byte(cpu.op_adr)
+			end
 			cpu.read = false
 			cpu.op_cycle = 2
 		end,
 		[2] = function(cpu)
-			cpu.adr = 0x100 + cpu.sp
-			cpu.sp = dec_byte(cpu.sp)
-			cpu.data = bit.band(cpu.op_adr + 2, 0xFF)
+			if cpu.int_state ~= "irq" and cpu.int_state ~= "nmi" then
+				-- If int_state is not set to "irq" or "nmi", it means that
+				-- the interrupt sequence was not triggered by an external
+				-- event, so it must be the BRK operation. In that case,
+				-- push PC+2 as return address.
+				cpu.int_state = "brk"
+			end
+			print("BRK_OP: cycle 2")
+			cpu.adr = 0x100 + mask_byte(cpu.sp - 1)
+			if cpu.int_state == "brk" then
+				cpu.data = bit.band(cpu.op_adr + 2, 0xFF)
+			else
+				cpu.data = bit.band(cpu.op_adr, 0xFF)
+			end
 			cpu.read = false
 			cpu.op_cycle = 3
 		end,
 		[3] = function(cpu)
-			cpu.adr = 0x100 + cpu.sp
-			cpu.sp = dec_byte(cpu.sp)
-			cpu.data = bit.bor(cpu:get_p(), 0x30)
+			print("BRK_OP: cycle 3")
+			cpu.adr = 0x100 + mask_byte(cpu.sp - 2)
+			-- FIXME: Probably depending on int_state?
+			cpu.data = bit.bor(cpu:get_p(), 0x20)
 			cpu.read = false
 			cpu.op_cycle = 4
 		end,
 		[4] = function(cpu)
+			print("BRK_OP: cycle 4")
+			cpu.sp = mask_byte(cpu.sp - 3)
 			cpu.p.i = true
-			cpu.adr = 0xFFFE
+			if cpu.int_state == "nmi" or cpu.int_state == "nmi_pending" then
+				cpu.adr = 0xFFFA
+			else
+				cpu.adr = 0xFFFE
+			end
 			cpu.read = true
 			cpu.op_cycle = 5
 		end,
 		[5] = function(cpu)
+			print("BRK_OP: cycle 5")
 			cpu.BRK_PCL = cpu.data
-			cpu.adr = 0xFFFF
+			if cpu.int_state == "nmi" or cpu.int_state == "nmi_pending" then
+				cpu.adr = 0xFFFB
+			else
+				cpu.adr = 0xFFFF
+			end
 			cpu.op_cycle = 6
 		end,
 		[6] = function(cpu)
+			print("BRK_OP: cycle 6")
 			cpu.pc = word(cpu.BRK_PCL, cpu.data)
 			cpu.adr = cpu.pc
 			cpu.op_cycle = 0
+			cpu.int_state = nil
 		end,
 		[0] = prepare_next_op,
 	}
@@ -872,8 +909,8 @@ local function rti_op()
 		end,
 		[3] = function(cpu)
 			cpu.adr = cpu.adr + 1
-			printf("OK SETTING P TO: 0x$%02X\n", cpu.data)
-			printf("CPU ADR: %04x\n", cpu.adr)
+			printf(" - RTI: SETTING P TO: 0x$%02X\n", cpu.data)
+			printf(" - RTI: CPU ADR: %04x\n", cpu.adr)
 			cpu:set_p(cpu.data)
 			cpu.op_cycle = 4
 		end,
@@ -1376,8 +1413,12 @@ local function nop_op()
 		mnemonic = "NOP",
 		len = 1,
 		adr = ADR_IMPL,
-		[1] = function(cpu) cpu.op_cycle = 0 end,
-		[0] = prepare_next_op
+		[1] = function(cpu)
+			cpu.op_cycle = 0
+		end,
+		[0] = function(cpu)
+			prepare_next_op(cpu)
+		end
 	}
 end
 
@@ -1808,62 +1849,6 @@ local function sbc_op(addr_fun)
 		)
 	)
 end
-
-INTERRUPT_SEQUENCE = {
-	[1] = function(cpu)
-		print("INTSEQ 1")
-		cpu.adr = 0x100 + cpu.sp
-		cpu.sp = bit.band(cpu.sp - 1, 0xFF)
-		cpu.data = upper_byte(cpu.op_adr)
-		cpu.read = false
-		cpu.op_cycle = 2
-	end,
-	[2] = function(cpu)
-		print("INTSEQ 2")
-		cpu.adr = 0x100 + cpu.sp
-		cpu.sp = bit.band(cpu.sp - 1, 0xFF)
-		cpu.data = bit.band(cpu.op_adr, 0xFF)
-		cpu.read = false
-		cpu.op_cycle = 3
-	end,
-	[3] = function(cpu)
-		print("INTSEQ 3")
-		cpu.adr = 0x100 + cpu.sp
-		cpu.sp = bit.band(cpu.sp - 1, 0xFF)
-		cpu.data = cpu:get_p()
-		cpu.read = false
-		cpu.op_cycle = 4
-	end,
-	[4] = function(cpu)
-		print("INTSEQ 4")
-		cpu.p.i = true
-		if cpu.ir == -1 then
-			cpu.adr = 0xFFFE
-		else
-			cpu.adr = 0xFFFA
-		end
-		cpu.read = true
-		cpu.op_cycle = 5
-	end,
-	[5] = function(cpu)
-		print("INTSEQ 5")
-
-		cpu.LOW_BYTE = cpu.data
-		cpu.adr = 0xFFFF
-		cpu.op_cycle = 6
-	end,
-	[6] = function(cpu)
-		print("INTSEQ 6")
-		cpu.pc = word(cpu.LOW_BYTE, cpu.data)
-		cpu.adr = cpu.pc
-		cpu.op_cycle = 0
-	end,
-	[0] = function(cpu)
-		print("INTSEQ 0")
-		cpu.TMP_HACK_INT_op_cycle = nil
-		prepare_next_op(cpu)
-	end
-}
 
 INSTRUCTIONS_6502 = {
 	[0x00] = brk_op(),

@@ -23,10 +23,89 @@ function TestMachine:new(rom_path, rom_offset)
 	local machine = {
 		cpu = Cpu6502:new(),
 		ram = ram,
+		ref_file = nil,
+		ref_line = nil,
+		target_adr = nil,
 	}
 
 	setmetatable(machine, { __index = self })
 	return machine
+end
+
+function TestMachine:set_target_address(adr)
+	self.target_adr = adr
+end
+
+function TestMachine:setup_reference(path)
+	self.ref_file = io.open(path, "r")
+	if not self.ref_file then
+		fatal("Failed to open reference file: " .. path)
+		return false
+	end
+	self.ref_line = 0
+	return true
+end
+
+function TestMachine:get_next_reference_state()
+	local line = self.ref_file:read("*l")
+	self.ref_line = self.ref_line + 1
+
+	if line == nil then
+		return nil, nil
+	end
+
+	local state = {}
+	for k, v in string.gmatch(line, "(%w+):(%x+)") do
+		k = string.lower(k)
+		if k == "ab" then
+			k = "adr"
+		elseif k == "d" then
+			k = "data"
+		end
+		if k == "halfcyc" then
+			state[k] = tonumber(v, 10)
+		else
+			state[k] = tonumber(v, 16)
+		end
+	end
+
+	-- Hack: skip every second half cycle
+	if state.halfcyc ~= nil and state.halfcyc % 2 == 0 then
+		return self:get_next_reference_state()
+	end
+
+	return state, line
+end
+
+function TestMachine:compare_reference_state(exp, exp_line)
+	local cmp_list = { "pc", "ir", "a", "x", "y", "adr", "rnw", "p", "sp", "data" }
+	local res = true
+	for _, cmp in ipairs(cmp_list) do
+		local a = exp[cmp]
+		local b
+		if cmp == "rnw" then
+			b = (self.cpu.read and 1) or 0
+		elseif cmp == "p" then
+			b = self.cpu:get_p()
+			-- b = bit.bor(b, 0x10)
+		elseif cmp == "data" then
+			b = self.cpu.data
+		else
+			b = self.cpu[cmp]
+		end
+
+		if a ~= b then
+			printf("Found a difference in register '%s':\n", cmp)
+			if cmp == "p" then
+				print("                            N V 1 B D I Z C")
+			end
+			printf("  Expected: % 5d (0x%04x)%s\n", a, a, cmp == "p" and "  " .. format_bits(a, " ") or "")
+			printf("  Got:      % 5d (0x%04x)%s\n", b, b, cmp == "p" and "  " .. format_bits(b, " ") or "")
+			printf("  Raw expectation line:\n  %s\n", exp_line)
+			res = false
+		end
+	end
+	return res
 end
 
 function TestMachine:inspect(adr)
@@ -36,35 +115,106 @@ end
 
 function TestMachine:step()
 	self.cpu:step()
+
+	if self.next_irq ~= nil then
+		self.cpu.irq = self.next_irq
+		self.next_irq = nil
+	end
+
+	if self.next_nmi ~= nil then
+		self.cpu.nmi = self.next_nmi
+		self.next_nmi = nil
+	end
+
 	if self.cpu.read then
 		self.cpu.data = self.ram[self.cpu.adr]
 	else
 		if self.cpu.adr == 0xBFFC then
 			if bit_set(self.cpu.data, 0) then
 				printf("Interrupt Request (0x%04X = %02X)\n", self.cpu.adr, self.cpu.data)
-				self.cpu.int = true
+				self.next_irq = true
+				-- self.cpu.irq = true
 			else
-				self.cpu.int = false
+				self.next_irq = false
+				-- self.cpu.irq = false
 			end
 
 			if bit_set(self.cpu.data, 1) then
-				printf("-------- !!!! NMI !!!! @$%04x, %02x, --------\n", self.cpu.op_adr, self.cpu.data)
-				print("Previous NMI: ", self.cpu.nmi)
-				self.cpu.nmi = true
+				self.next_nmi = true
+				-- self.cpu.nmi = true
 			else
-				self.cpu.nmi = false
+				self.next_nmi = false
+				-- self.cpu.nmi = false
 			end
 		end
 		self.ram[self.cpu.adr] = self.cpu.data
 	end
 end
 
-local function run_test(cycles)
-	local m = TestMachine:new("6502_functional_test.bin")
-	m.cpu:reset_sequence(0x400, 0xD8)
-	while cycles == nil or m.cpu.cycle < cycles do
-		-- print(m.cpu:format_state() .. " " .. m.cpu:format_internals())
-		m:step()
+function TestMachine:run(dbg)
+	-- Remember address of previous operation to detect when trapped
+	local prev_adr = 0
+
+	-- How many times we've looped back to same instruction
+	local trap_counter = 0
+
+	while true do
+		-- Check if we've reached the target address
+		if self.target_adr ~= nil and self.cpu.pc == self.target_adr then
+			print(dbg:format_rich(self.cpu, self))
+			return true, "Target address reached"
+		end
+
+		-- Detect traps
+		if prev_adr == self.cpu.op_adr then
+			trap_counter = trap_counter + 1
+			if trap_counter > 100 then
+				printf("Trapped at 0x%04x\n", prev_adr)
+				dbg:stop()
+			end
+		else
+			prev_adr = self.cpu.op_adr
+			trap_counter = 0
+		end
+
+		if self.ref_file then
+			local exp = self:get_next_reference_state()
+			if exp == nil then
+				self.ref_file:close()
+				self.ref_file = nil
+
+				if self.target_adr == nil then
+					return true, "End of reference input"
+				end
+			else
+				if exp.halfcyc > self.cpu.cycle * 2 + 1 then
+					printf("Fast forwarding to cycle %d...\n", exp.halfcyc / 2)
+					while exp.halfcyc > self.cpu.cycle * 2 + 1 do
+						self:step()
+					end
+				end
+
+				if not self:compare_reference_state(exp, 0) then
+					print("Breaking execution to investigte divergence")
+					dbg:stop()
+				end
+			end
+		end
+
+		if dbg ~= nil then
+			dbg:update(self.cpu, self)
+			if dbg.stopped then
+				dbg:prompt(self.cpu, self)
+			end
+		end
+
+		self:step()
+
+		-- if m.cpu.cycle % 10000 == 0 and false then
+		-- 	printf("Cycle %d, PC: %04x, IR: %02x, INTH: %s\n",
+		-- 		m.cpu.cycle, m.cpu.pc, m.cpu.ir,
+		-- 		tostring(m.cpu.TMP_HACK_INT_TCU))
+		-- end
 	end
 end
 
@@ -73,14 +223,15 @@ local function run_klaus_dormann_interrupt_test()
 	local m = TestMachine:new("as64/6502_interrupt_test.bin", 10)
 	m.cpu:reset_sequence(0x400, m:inspect(0x400))
 
-	-- Remember address of previous operation to detect when trapped
-	local prev_adr = 0
+	if not m:setup_reference("simulations/6502_interrupt_test.perfect6502") then
+		return
+	end
 
-	-- How many times we've looped back to same instruction
-	local trap_counter = 0
+	m:set_target_address(0x6F5)
 
 	dbg:break_at(0x400)
 	dbg:break_at(0x6e1)
+	dbg:break_at(0x42B)
 	-- dbg:break_at(0x444)
 	-- dbg:break_at(0x465)
 	-- dbg:break_at(0x544)
@@ -91,189 +242,44 @@ local function run_klaus_dormann_interrupt_test()
 	-- dbg:break_at(0x077d)
 	-- dbg:break_at(0x07c3)
 	-- dbg:break_at(0x07c4)
-
-	while m.cpu.pc ~= target_adr do
-		-- Detect traps
-		if prev_adr == m.cpu.op_adr then
-			trap_counter = trap_counter + 1
-			if trap_counter > 100 then
-				printf("Trapped at 0x%04x\n", prev_adr)
-				dbg:stop()
-			end
-		else
-			prev_adr = m.cpu.op_adr
-			trap_counter = 0
-		end
-
-		dbg:update(m.cpu, m)
-		if dbg.stopped then
-			dbg:prompt(m.cpu, m)
-		end
-
-		m:step()
-
-		if m.cpu.cycle % 10000 == 0 and false then
-			printf("Cycle %d, PC: %04x, IR: %02x, INTH: %s\n",
-				m.cpu.cycle, m.cpu.pc, m.cpu.ir,
-				tostring(m.cpu.TMP_HACK_INT_TCU))
-		end
-	end
+	return m:run(dbg)
 end
 
-local function run_test_until_address_reached(rom_path, target_adr)
+local function run_test(rom_path, target_adr, ref_path)
+	local dbg = Debugger:new()
 	local m = TestMachine:new(rom_path)
 
-	local prev_adr = -1
-	local trap_count = 0
-	local function detect_trap(cpu)
-		if cpu.op_cycle == 1 then
-			local adr = cpu.pc - 1
-			if adr == prev_adr then
-				trap_count = trap_count + 1
-				if trap_count > 1000 then
-					return adr
-				end
-			else
-				trap_count = 0
-				prev_adr = adr
-				return false
-			end
-		end
-		return false
+	if ref_path then
+		m:setup_reference(ref_path)
 	end
 
-	m.cpu:reset_sequence(0x400, 0xD8)
+	m.cpu:reset_sequence(0x400, m:inspect(0x400))
 
-	while m.cpu.pc ~= target_adr do
-		local trapped = detect_trap(m.cpu)
-		if trapped ~= false then
-			printf("Trapped at 0x%04X\n", trapped)
-			break
-		end
-
-		m:step()
-		if m.cpu.cycle % 1000000 == 0 then
-			printf("Cycle %d, PC: %04x\n", m.cpu.cycle, m.cpu.pc)
-		end
+	if target_adr ~= nil then
+		m:set_target_address(target_adr)
 	end
 
-	printf("End at %04x\n", m.cpu.pc)
-end
-
-local function run_test_with_validation(rom_path, expect_path, cycles)
-	local cmp_list = { "pc", "ir", "a", "x", "y", "adr", "rnw", "p", "sp", "data" }
-	local expect_file = io.open(expect_path, "r")
-	if not expect_file then
-		fatal("Failed to open " .. expect_path)
-		return
-	end
-
-	local function next_expected_state()
-		local line = expect_file:read("*l")
-		if line == nil then
-			return nil, nil
-		end
-		local state = {}
-		for k, v in string.gmatch(line, "(%w+):(%x+)") do
-			k = string.lower(k)
-			if k == "ab" then
-				k = "adr"
-			elseif k == "d" then
-				k = "data"
-			end
-			if k == "halfcyc" then
-				state[k] = tonumber(v, 10)
-			else
-				state[k] = tonumber(v, 16)
-			end
-		end
-
-		-- Hack: skip every second half cycle
-		if state.halfcyc ~= nil and state.halfcyc % 2 == 0 then
-			return next_expected_state()
-		end
-
-		return state, line
-	end
-
-	local function compare_states(machine, exp, exp_line)
-		local res = true
-		for _, cmp in ipairs(cmp_list) do
-			local a = exp[cmp]
-			local b
-			if cmp == "rnw" then
-				b = (machine.cpu.read and 1) or 0
-			elseif cmp == "p" then
-				b = machine.cpu:get_p()
-			elseif cmp == "data" then
-				b = machine.cpu.data
-			else
-				b = machine.cpu[cmp]
-			end
-
-			if a ~= b then
-				printf("Found a difference in register '%s':\n", cmp)
-				if cmp == "p" then
-					print("                            N V 1 B D I Z C")
-				end
-				printf("  Expected: % 5d (0x%04x)%s\n", a, a, cmp == "p" and "  " .. format_bits(a, " ") or "")
-				printf("  Got:      % 5d (0x%04x)%s\n", b, b, cmp == "p" and "  " .. format_bits(b, " ") or "")
-				printf("  Raw expectation line:\n  %s\n", exp_line)
-				res = false
-			end
-		end
-		return res
-	end
-
-	local machine = TestMachine:new(rom_path)
-	if machine == nil then
-		return
-	end
-
-	machine.cpu:reset_sequence(0x400, 0xD8)
-
-	while cycles == nil or machine.cpu.cycle < cycles do
-		local exp, exp_line = next_expected_state()
-		if exp == nil then
-			print("End of expected cycles. Success!")
-			break
-		end
-
-		if exp.halfcyc > machine.cpu.cycle * 2 + 1 then
-			printf("Fast forwarding to cycle %d...\n", exp.halfcyc / 2)
-			while exp.halfcyc > machine.cpu.cycle * 2 + 1 do
-				machine.cpu:step()
-			end
-		end
-
-		if machine.cpu.cycle % 10000 == 0 then
-			print(tostring(machine.cpu.cycle) ..
-				": " .. machine.cpu:format_state() .. " " .. machine.cpu:format_internals())
-		end
-
-		if not compare_states(machine, exp, exp_line) then
-			print("Test failed.")
-			break
-		end
-
-		-- print("")
-		machine:step()
-	end
+	return m:run(dbg)
 end
 
 if true then
-	run_klaus_dormann_interrupt_test()
+	local res, msg = run_klaus_dormann_interrupt_test()
+	printf(" * Test result for Klaus Dormann interrupt test: %s %s\n", (res and 'Success!') or "Fail!", msg)
 end
 
 if false then
-	run_test_until_address_reached("6502_functional_test.bin", 0x3469)
+	local path = "6502_functional_test.bin"
+	local res, msg = run_test(path, 0x3469)
+	printf(" * Test result for %s: %s %s\n", path, (res and 'Success!') or "Fail!", msg)
 end
 
 if false then
-	run_test_with_validation(
-		"6502_functional_test.bin",
-		-- "simulations/decimal_tests.txt"
-		"simulations/100M.txt"
-	-- "simulations/6502_functional_test.perfect6502"
+	local path = "6502_functional_test.bin"
+	local res, msg = run_test(
+		path,
+		nil,
+		"simulations/6502_functional_test.perfect6502"
+	-- "simulations/100M.txt"
 	)
+	printf(" * Test result for %s: %s %s\n", path, (res and 'Success!') or "Fail!", msg)
 end

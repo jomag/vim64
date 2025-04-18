@@ -4,8 +4,17 @@ function Debugger:new()
 	local dbg = {
 		stopped = false,
 
-		-- If true, the execution will stop when next op is reached
-		stop_at_next_op = false,
+		-- Number of cycles to execute before stopping
+		-- It will decrement for every cycle until it
+		-- reaches zero, and then it will be set to nil.
+		-- Ignored if the value is nil.
+		cycles_before_stopping = nil,
+
+		-- Number of operations to execute before stopping
+		-- It will decrement for every operation until it
+		-- reaches zero, and then it will be set to nil.
+		-- Ignored if the value is nil.
+		ops_before_stopping = nil,
 
 		breakpoints = {},
 		max_width = 60
@@ -19,15 +28,16 @@ function Debugger:break_at(adr)
 end
 
 function Debugger:format_flags(cpu)
+	local p = cpu:get_p()
 	return ("%s%s%s%s%s%s%s%s"):format(
-		(cpu.p.n and "N") or "-",
-		(cpu.p.v and "V") or "-",
-		(cpu.p.ignored_bit and "1") or "-",
-		(cpu.p.b and "B") or "-",
-		(cpu.p.d and "D") or "-",
-		(cpu.p.i and "I") or "-",
-		(cpu.p.z and "Z") or "-",
-		(cpu.p.c and "C") or "-"
+		(bit_set(p, 7) and "N") or "-",
+		(bit_set(p, 6) and "V") or "-",
+		(bit_set(p, 5) and "1") or "-",
+		(bit_set(p, 4) and "B") or "-",
+		(bit_set(p, 3) and "D") or "-",
+		(bit_set(p, 2) and "I") or "-",
+		(bit_set(p, 1) and "Z") or "-",
+		(bit_set(p, 0) and "C") or "-"
 	)
 end
 
@@ -66,8 +76,8 @@ function Debugger:format_instruction_at(cpu, bus, adr, with_extras)
 		local lo = bus:inspect(adr + 1)
 		local hi = bus:inspect(adr + 2)
 		operand = ("$%04X,X"):format(word(lo, hi))
-		local adr = word(lo, hi) + cpu.x
-		extras = ("[$%04X] = $%02X"):format(adr, bus:inspect(adr))
+		local adr2 = word(lo, hi) + cpu.x
+		extras = ("[$%04X] = $%02X"):format(adr2, bus:inspect(adr2))
 	else
 		operand = "???"
 		extras = "fixme, adr mode: " .. instr.adr
@@ -149,7 +159,7 @@ end
 
 function Debugger:format_bus_status(cpu)
 	local str = "Bus status:\n"
-	str = str .. ("  Adr: $04X   Data: $02X   RW: %s\n"):format(cpu.adr, cpu.data, (cpu.read and "read") or "write")
+	str = str .. ("  Adr: $%04X   Data: $%02X   RW: %s\n"):format(cpu.adr, cpu.data, (cpu.read and "read") or "write")
 	return str
 end
 
@@ -172,7 +182,10 @@ function Debugger:format_rich(cpu, bus, event)
 		("  PC: $%04X   A: $%02X   X: $%02X   Y: $%02X   SP: $%02X   P: %02X\n\n"):format(cpu.pc, cpu.a, cpu.x, cpu.y,
 			cpu.sp, cpu:get_p())
 
-	str = str .. ("Flags: %s   Cycle: %d\n\n"):format(self:format_flags(cpu), cpu.cycle)
+	str = str .. ("Flags: %s   Cycle: %d   IR: $%02X\n\n"):format(self:format_flags(cpu), cpu.cycle, cpu.ir)
+
+	str = str .. ("Half Cycle: %d   Int State: %s   Op cycle: %d\n"):format(cpu.cycle * 2, cpu.int_state, cpu.op_cycle)
+	str = str .. ("Pins: IRQ: %s   NMI: %s\n\n"):format(tostring(cpu.irq), tostring(cpu.nmi))
 
 	str = str .. self:format_stack(cpu, bus) .. "\n"
 
@@ -197,17 +210,11 @@ local function cmd_read(args, dbg, machine)
 end
 
 local function cmd_step(args, dbg, machine)
-	for _ = 1, args[1] do
-		-- FIXME: should stop on breakpoints!
-		dbg:step()
-	end
+	dbg:step(math.max(args[1] or 1, 1))
 end
 
 local function cmd_next(args, dbg, machine)
-	for i = 1, args[1] do
-		-- FIXME: should stop on breakpoints!
-		dbg:next()
-	end
+	dbg:next(math.max(args[1] or 1, 1))
 end
 
 local function cmd_continue(args, dbg, machine)
@@ -391,21 +398,33 @@ function Debugger:prompt(cpu, machine)
 	end
 end
 
+-- Update debugger state
+-- This method should be called once every cycle
 function Debugger:update(cpu, bus)
-	if self.stop_at_next_cycle then
-		if cpu.op_cycle == 1 then
-			print(self:format_instruction_at(cpu, bus, cpu.op_adr, true))
+	if self.cycles_before_stopping ~= nil then
+		if self.cycles_before_stopping == 0 then
+			if cpu.op_cycle == 1 then
+				print(self:format_instruction_at(cpu, bus, cpu.op_adr, true))
+			end
+			self:stop()
+			self.cycles_before_stopping = nil
+		else
+			self.cycles_before_stopping = self.cycles_before_stopping - 1
 		end
-		self:stop()
 	end
 
 	if cpu.op_cycle == 1 then
-		if self.stop_at_next_op then
+		if self.ops_before_stopping == 0 then
 			print(self:format_instruction_at(cpu, bus, cpu.op_adr, true))
 			self:stop()
+			self.ops_before_stopping = nil
 		elseif self.breakpoints[cpu.op_adr] then
 			print(self:format_rich(cpu, bus, ("BREAKPOINT HIT @ $%04x"):format(cpu.op_adr)))
 			self:stop()
+		end
+
+		if self.ops_before_stopping ~= nil then
+			self.ops_before_stopping = self.ops_before_stopping - 1
 		end
 	end
 end
@@ -416,18 +435,25 @@ end
 
 function Debugger:continue()
 	self.stopped = false
-	self.stop_at_next_op = false
-	self.stop_at_next_cycle = false
+	self.ops_before_stopping = nil
+	self.cycles_before_stopping = nil
 end
 
-function Debugger:next()
+function Debugger:next(n)
+	if n == nil then
+		n = 1
+	end
 	self.stopped = false
-	self.stop_at_next_cycle = false
-	self.stop_at_next_op = true
+	self.ops_before_stopping = math.max(n - 1, 0)
+	self.cycles_before_stopping = nil
 end
 
-function Debugger:step()
+function Debugger:step(n)
+	if n == nil then
+		n = 1
+	end
+	print("STEPPING CYCLES", n)
 	self.stopped = false
-	self.stop_at_next_op = false
-	self.stop_at_next_cycle = true
+	self.cycles_before_stopping = math.max(n - 1, 0)
+	self.ops_before_stopping = nil
 end

@@ -34,6 +34,12 @@ function Cpu6502:new()
 		-- Special values: -1 = Interrupt sequence, -2 = NMI sequence
 		ir = 0,
 
+		-- Interrupt state
+		-- Valid values:
+		--    "irq", "nmi", "brk",
+		--    "irq_pending", "nmi_pending"
+		int_state = nil,
+
 		-- Address to the current operation (PC when IR was set)
 		op_adr = nil,
 
@@ -58,8 +64,8 @@ function Cpu6502:new()
 		-- Bus data pins
 		data = 0,
 
-		-- Interrupt pin (input). True on interrupt request.
-		int = false,
+		-- Interrupt Request pin (input). True on interrupt request.
+		irq = false,
 
 		-- Non-Maskable Interrupt pin (input). Triggers
 		-- interrupt on false-to-true edge.
@@ -79,9 +85,27 @@ end
 
 function Cpu6502:get_p()
 	local p = 0
+
+	-- FIXME: handle over types of interrupts
+	-- TODO: make more efficient by setting B on state change instead
+	--       of calculating it on every call to get_p() ...
+	local b = 16
+	if self.int_state ~= nil then
+		if not self.brk_contaminated then
+			if self.int_state == "irq_pending" or self.int_state == "nmi_pending" then
+				b = 0
+			elseif self.int_state == "irq" and self.op_cycle < 5 then
+				b = 0
+			elseif self.int_state == "nmi" and self.op_cycle < 5 then
+				b = 0
+			end
+		end
+	end
+
 	p = bit.bor(p, self.p.n and 128 or 0)
 	p = bit.bor(p, self.p.o and 64 or 0)
 	p = bit.bor(p, self.p.ignored_bit and 32 or 0)
+	p = bit.bor(p, b)
 	p = bit.bor(p, self.p.d and 8 or 0)
 	p = bit.bor(p, self.p.i and 4 or 0)
 	p = bit.bor(p, self.p.z and 2 or 0)
@@ -168,29 +192,45 @@ end
 function Cpu6502:step()
 	self.cycle = self.cycle + 1
 
-	-- On interrupt, the CPU will wait until current instruction
-	-- has finished before invoking the interrupt handler.
-	-- TODO: handle the exception from this rule: the BRK instruction.
-	if self.int and self.p.i then
-		print("INT still requesting, but I-flag high and subcycle:", self.op_cycle, self.ir)
-	end
-
-	if self.int and not self.p.i and self.op_cycle == 1 then
-		print("Trigger IRQ!")
-		self.ir = -1
-	end
-
-	if self.nmi ~= self.nmi_previous and self.op_cycle == 1 then
-		print("Trigger NMI!")
-		if self.nmi then
-			self.ir = -2
-		end
-		self.nmi_previous = self.nmi
-	end
-
 	local instr = self.instructions[self.ir]
-	if self.ir < 0 then
-		instr = INTERRUPT_SEQUENCE
+	local instr_cycles = 1
+	while instr[instr_cycles] ~= nil do
+		instr_cycles = instr_cycles + 1
+	end
+
+	if self.op_cycle == 0 then
+		self.brk_contaminated = self.data == 0
+	end
+
+	if self.irq and (self.int_state == nil or self.int_state == "nmi_pending" or self.int_state == "irq_pending") and not self.p.i then
+		self.int_state = "irq_pending"
+		if self.op_cycle == instr_cycles - 1 then
+			self.int_state = "irq"
+		end
+	end
+
+	if self.nmi ~= self.nmi_previous then
+		print("COULD BE ------------------------ NMI ----------  <///")
+		printf("   nmi: %s, int_state: %s, op_cycle: %d, instr_cycles: %d, ir: %x\n", tostring(self.nmi),
+			tostring(self.int_state),
+			self.op_cycle, instr_cycles, self.ir)
+
+		if self.nmi then
+			self.int_state = "nmi_pending"
+		end
+
+		if (self.int_state == nil or self.int_state == "irq_pending" or self.int_state == "nmi_pending") and self.op_cycle == instr_cycles - 1 then
+			print("YESSSS YESSS YESSS!!! ")
+			if self.nmi then
+				self.int_state = "nmi"
+
+				-- If BRK happens at the same time as NMI, the BRK
+				-- operation will "contaminate" the B flag.
+				-- https://www.nesdev.org/wiki/Visual6502wiki/6502_BRK_and_B_bit
+				self.brk_contaminated = self.ir == 0
+			end
+			self.nmi_previous = self.nmi
+		end
 	end
 
 	if instr == nil then
@@ -198,7 +238,21 @@ function Cpu6502:step()
 		return
 	end
 
+	-- Hack to restore PC if interrupt triggered
+	local pc_before = self.pc
+	local adr_before = self.adr
+
 	instr[self.op_cycle](self)
+
+	if self.op_cycle == 1 and self.int_state ~= nil then
+		if self.int_state == "irq" or self.int_state == "nmi" or self.int_state == "brk" then
+			print(" --- THIS HAPPENS IT REPLACE NEXT OP WITH INT!! p")
+			self.ir = 0
+			self.pc = pc_before
+			self.adr = adr_before
+			-- instr = self.instructions[self.ir]
+		end
+	end
 end
 
 function Cpu6502:prepare_op(opcode, adr)
