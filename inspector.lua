@@ -14,7 +14,7 @@ end
 
 function format_cia(name, cia)
 	local txt =
-	"-- %s --\nINT MASK: %s\nINT DATA: %s\n\n-- TIMER A --\nVALUE: %04x\nSTART: %04x\n\n-- TIMER B --\nVALUE: %04x\nSTART: %04x"
+	"-- %s --\nINT MASK: %s\nINT DATA: %s\n\n-- TIMER A --\nVALUE: %04x\nSTART: %04x\n\n-- TIMER B --\nVALUE: %04x\nSTART: %04x\n\n-- PORT A+B --\nPA: %02X\nPB: %02X\nDDRA: %02X\nDDRB: %02X"
 
 	return txt:format(
 		name,
@@ -23,7 +23,11 @@ function format_cia(name, cia)
 		cia.timer_a.value,
 		cia.timer_a.start,
 		cia.timer_b.value,
-		cia.timer_b.start
+		cia.timer_b.start,
+		cia.port_a.value,
+		cia.port_b.value,
+		cia.port_a.dir,
+		cia.port_b.dir
 	)
 end
 

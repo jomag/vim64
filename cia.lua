@@ -24,9 +24,12 @@ function CIA:get(adr)
 
 	if adr == 0x00 then
 		print("Reading port A value")
-		return self.port_a.value
+		return self:get_port_a()
+	elseif adr == 0x01 then
+		-- printf("Reading port B value: $%02X\n", self:get_port_b())
+		return self:get_port_b()
 	elseif adr == 0x0D then
-		print("INT_DATA READ! Clearing INT_DATA and IRQ pin")
+		-- print("INT_DATA READ! Clearing INT_DATA and IRQ pin")
 		local retval = self.int_data
 		self.int_data = 0
 		self.irq = false
@@ -51,13 +54,14 @@ function CIA:set(adr, val)
 	adr = bit.band(adr, 0xF)
 
 	if adr == 0x00 then
-		print("Write port A", val)
-		self.port_a.value = val
+		self.port_a.output = val
 	elseif adr == 0x01 then
-		print("Write port B", val)
-		self.port_a.value = val
+		self.port_b.output = val
 	elseif adr == 0x02 then
-		self.port_a.dir = val
+		if self.port_a.dir ~= val then
+			printf("New DDR for PORTA: $%02X\n", val)
+			self.port_a.dir = val
+		end
 	elseif adr == 0x03 then
 		self.port_b.dir = val
 	elseif adr == 0x04 then
@@ -108,12 +112,14 @@ function CIA:set(adr, val)
 end
 
 function CIA:debug_print()
+	local pa = self:get_port_a()
+	local pb = self:get_port_b()
 	local s = ""
 	s = s .. "Port A:\n"
-	s = s .. ("  Value: %02x (%s)\n"):format(self.port_a.value, format_bits(self.port_a.value))
+	s = s .. ("  Value: %02x (%s)\n"):format(pa, format_bits(pa))
 	s = s .. ("  Dir:   %02x (%s)\n"):format(self.port_a.dir, format_bits(self.port_a.dir))
 	s = s .. "Port B:\n"
-	s = s .. ("  Value: %02x (%s)\n"):format(self.port_b.value, format_bits(self.port_b.value))
+	s = s .. ("  Value: %02x (%s)\n"):format(pb, format_bits(pb))
 	s = s .. ("  Dir:   %02x (%s)\n"):format(self.port_b.dir, format_bits(self.port_b.dir))
 	s = s .. "Timer A:\n"
 	s = s .. ("  Start value: %04x\n"):format(self.timer_a.start)
@@ -133,15 +139,17 @@ function CIA:new(props)
 		chip_enabled = false,
 
 		port_a       = {
-			-- For each bit, 0 = read, 1 = write		
+			-- For each bit: 0 = input, 1 = output
 			dir = 0,
-			value = 0,
+			input = 0xFF,
+			output = 0
 		},
 
 		port_b       = {
-			-- For each bit, 0 = read, 1 = write		
+			-- For each bit: 0 = input, 1 = output
 			dir = 0,
-			value = 0,
+			input = 0xFF,
+			output = 0
 		},
 
 		timer_a      = {
@@ -156,9 +164,6 @@ function CIA:new(props)
 			value = 0,
 		},
 
-		in_a         = 0,
-		in_b         = 0,
-
 		-- Turns true on interrupt request (IRQ pin is reversed)
 		irq          = false,
 		int_mask     = 0,
@@ -167,7 +172,23 @@ function CIA:new(props)
 	return v
 end
 
-function CIA:step(adr, data)
+-- Returns the pin values of port A, depending on data direction of each pin
+function CIA:get_port_a()
+	return bit.bor(
+		bit.band(self.port_a.output, self.port_a.dir),
+		bit.band(self.port_a.input, bit.bnot(self.port_a.dir))
+	)
+end
+
+-- Returns the pin values of port B, depending on data direction of each pin
+function CIA:get_port_b()
+	return bit.bor(
+		bit.band(self.port_b.output, self.port_b.dir),
+		bit.band(self.port_b.input, bit.bnot(self.port_b.dir))
+	)
+end
+
+function CIA:step(adr, data, inp_a, inp_b)
 	local retval = nil
 
 	if adr ~= nil and data ~= nil then
@@ -178,8 +199,13 @@ function CIA:step(adr, data)
 		retval = self:get(adr)
 	end
 
-	local in_a = bit.band(bit.bnot(self.port_a.dir), self.in_a)
-	local in_b = bit.band(bit.bnot(self.port_b.dir), self.in_b)
+	if inp_a ~= nil then
+		self.port_a.input = inp_a
+	end
+
+	if inp_b ~= nil then
+		self.port_b.input = inp_b
+	end
 
 	if not bit_set(self.timer_a.control, 5) then
 		if bit_set(self.timer_a.control, 0) then
@@ -210,6 +236,7 @@ function CIA:step(adr, data)
 					self.int_data = bit.bor(self.int_data, 2)
 				else
 					self.int_data = bit.bor(self.int_data, 0x82)
+					print("IRQ from CIA timer 2")
 					self.irq = true
 				end
 

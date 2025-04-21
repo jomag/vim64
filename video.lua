@@ -198,7 +198,7 @@ function VicII:naive_render(draw, c64)
 	for cy = 0, 24 do
 		for cx = 0, 39 do
 			local fg = bit.band(c64.color_ram[cy * 40 + cx], 0xF)
-			local char = c64:inspect_byte(0x400 + cy * 40 + cx)
+			local char = c64:inspect(0x400 + cy * 40 + cx)
 			local ptr = char_offset + char * 8
 			local x = cx * 8
 			for y = 0, 7 do

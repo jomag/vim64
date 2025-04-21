@@ -2,6 +2,7 @@ require "cpu"
 require "cia"
 require "sid"
 require "video"
+require "keyboard"
 require "c64"
 
 require "inspector"
@@ -60,12 +61,78 @@ function love.draw()
 	end
 end
 
+local love2d_to_c64_key = {
+	a = 'a',
+	b = 'b',
+	c = 'c',
+	d = 'd',
+	e = 'e',
+	f = 'f',
+	g = 'g',
+	h = 'h',
+	i = 'i',
+	j = 'j',
+	k = 'k',
+	l = 'l',
+	m = 'm',
+	n = 'n',
+	o = 'o',
+	p = 'p',
+	q = 'q',
+	r = 'r',
+	s = 's',
+	t = 't',
+	u = 'u',
+	v = 'v',
+	w = 'w',
+	x = 'x',
+	y = 'y',
+	z = 'z',
+	['0'] = 'key_0',
+	['1'] = 'key_1',
+	['2'] = 'key_2',
+	['3'] = 'key_3',
+	['4'] = 'key_4',
+	['5'] = 'key_5',
+	['6'] = 'key_6',
+	['7'] = 'key_7',
+	['8'] = 'key_8',
+	['9'] = 'key_9',
+	space = 'key_space',
+	['return'] = 'key_return',
+	rshift = 'key_right_shift',
+	lshift = 'key_left_shift',
+	rctrl = 'key_control',
+	lctrl = 'key_control',
+	escape = 'key_run_stop',
+	['\\'] = 'key_equal',
+	['.'] = 'key_period',
+	[','] = 'key_comma',
+	['-'] = 'key_plus',
+	[';'] = 'key_semicolon'
+}
+
 function love.keypressed(key)
 	if key == "f10" then
 		STATE.inspection = not STATE.inspection
 		STATE.paused = STATE.inspection
 	elseif STATE.inspection then
 		inspector_keypress(key)
+	else
+		local c64_key = love2d_to_c64_key[key]
+		if c64_key ~= nil then
+			STATE.machine.keyboard:key_down(c64_key)
+		end
+	end
+end
+
+function love.keyreleased(key)
+	if STATE.inspection then
+	else
+		local c64_key = love2d_to_c64_key[key]
+		if c64_key ~= nil then
+			STATE.machine.keyboard:key_up(c64_key)
+		end
 	end
 end
 
@@ -109,13 +176,16 @@ function love.load()
 	STATE.buf_image = love.graphics.newImage(STATE.buf)
 	STATE.buf_image:setFilter("nearest", "nearest")
 
+	love.window.setVSync(0)
+
 	print("Resetting machine...")
+	local start_adr = word(
+		STATE.machine:inspect(0xFFFC),
+		STATE.machine:inspect(0xFFFD)
+	)
 	STATE.machine.cpu:reset_sequence(
-		STATE.bus,
-		word(
-			STATE.machine:inspect_byte(0xFFFC),
-			STATE.machine:inspect_byte(0xFFFD)
-		)
+		start_adr,
+		STATE.machine:inspect(start_adr)
 	)
 
 	print("Generating font...")

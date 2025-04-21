@@ -17,6 +17,7 @@ function C64:new(props, kernal_path, basic_path, char_path)
 		cia1 = CIA:new(),
 		cia2 = CIA:new(),
 		sid = SID:new(),
+		keyboard = Keyboard:new(),
 		ram = ram,
 		color_ram = color_ram,
 		kernal_rom = load_bin(kernal_path),
@@ -34,7 +35,7 @@ function C64:new(props, kernal_path, basic_path, char_path)
 	return c64
 end
 
-function C64:inspect_byte(adr)
+function C64:inspect(adr)
 	local chip, chip_adr = self:update_bus(adr)
 	if chip == self.ram or chip == self.kernal_rom or chip == self.basic_rom or chip == self.char_rom then
 		return chip[chip_adr]
@@ -72,7 +73,7 @@ function C64:update_bus(adr)
 end
 
 function C64:step()
-	self.cpu.int = self.cia1.irq or self.cia2.irq
+	self.cpu.irq = self.cia1.irq or self.cia2.irq
 	self.cpu:step()
 	local chip, adr = self:update_bus(self.cpu.adr)
 
@@ -131,14 +132,16 @@ function C64:step()
 		self.vic:step()
 	end
 
+	local keyboard_row = self.keyboard:scan(self.cia1:get_port_a())
+
 	if chip == self.cia1 then
 		if self.cpu.read then
-			self.cpu.data = self.cia1:step(adr)
+			self.cpu.data = self.cia1:step(adr, nil, nil, keyboard_row)
 		else
-			self.cia1:step(adr, self.cpu.data)
+			self.cia1:step(adr, self.cpu.data, nil, keyboard_row)
 		end
 	else
-		self.cia1:step()
+		self.cia1:step(nil, nil, nil, keyboard_row)
 	end
 
 	if chip == self.cia2 then

@@ -214,8 +214,9 @@ function Cpu6502:step()
 		self.brk_contaminated = self.data == 0
 	end
 
+	-- print("state: ", self.irq, self.int_state, self.p.i)
 	if self.irq and self.int_state == nil and not self.p.i then
-		self.int_pending = "irq" -- fixme: intention is for this to be bool ...
+		self.int_pending = true
 		if self.op_cycle == instr_cycles - 1 then
 			self.int_state = "irq"
 			self.int_pending = false
@@ -231,7 +232,7 @@ function Cpu6502:step()
 	end
 
 	if self.nmi_edge_detected and self.int_state == nil then
-		self.int_pending = "nmi" -- fixme: should be "true"
+		self.int_pending = true
 		self.int_vector = 0xFFFA
 
 		if self.int_state == nil and self.op_cycle == instr_cycles - 1 then

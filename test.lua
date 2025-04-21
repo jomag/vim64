@@ -244,13 +244,14 @@ end
 
 local function run_test(rom_path, target_adr, ref_path)
 	local dbg = Debugger:new()
-	local m = TestMachine:new(rom_path)
+	local m = TestMachine:new(rom_path, 0xC000 - 16)
 
 	if ref_path then
 		m:setup_reference(ref_path)
 	end
 
-	m.cpu:reset_sequence(0x400, m:inspect(0x400))
+	m.cpu:reset_sequence(0xC000, m:inspect(0xC000))
+	dbg:break_at(0xC000)
 
 	if target_adr ~= nil then
 		m:set_target_address(target_adr)
@@ -259,18 +260,31 @@ local function run_test(rom_path, target_adr, ref_path)
 	return m:run(dbg)
 end
 
-if true then
+local enabled_tests = {
+	nestest = true,
+	klaus_dormann_interrupt = false,
+	klaus_dormann_functional = false,
+	klaus_dormann_functional_perfect = false,
+}
+
+if enabled_tests.nestest then
+	local path = "../vim64-tests/nestest/nestest.nes"
+	local res, msg = run_test(path, nil)
+	printf(" * Test result for 'nestest': %s %s\n", (res and 'Success!') or 'Fail!', msg)
+end
+
+if enabled_tests.klaus_dormann_interrupt then
 	local res, msg = run_klaus_dormann_interrupt_test()
 	printf(" * Test result for Klaus Dormann interrupt test: %s %s\n", (res and 'Success!') or "Fail!", msg)
 end
 
-if false then
+if enabled_tests.klaus_dormann_functional then
 	local path = "6502_functional_test.bin"
 	local res, msg = run_test(path, 0x3469)
 	printf(" * Test result for %s: %s %s\n", path, (res and 'Success!') or "Fail!", msg)
 end
 
-if false then
+if enabled_tests.klaus_dormann_functional_perfect then
 	local path = "6502_functional_test.bin"
 	local res, msg = run_test(
 		path,
