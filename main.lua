@@ -168,7 +168,31 @@ function generate_c64_font()
 	return love.graphics.newImageFont(img, chars)
 end
 
-function love.load()
+function print_usage(quit)
+	print("Usage: vim64 [--help] [filename.prg]")
+	if quit then
+		love.event.quit(true)
+	end
+end
+
+function love.load(args)
+	local prg_file = nil
+
+	for i = 1, #args do
+		local arg = args[i]
+		if arg == "--help" or arg == "-h" then
+			print_usage(true)
+			return
+		elseif arg:match("%.prg$") then
+			if prg_file ~= nil then
+				print("Max one prg file can be loaded")
+				print_usage(true)
+				return
+			end
+			prg_file = arg
+		end
+	end
+
 	STATE.machine = C64:new(nil, "kernal.901227-03.bin", "basic.901226-01.bin", "characters.325018-02.bin")
 
 	print("Setting up rendering engine...")
@@ -177,6 +201,10 @@ function love.load()
 	STATE.buf_image:setFilter("nearest", "nearest")
 
 	love.window.setVSync(0)
+
+	if prg_file then
+		STATE.machine:load_prg(prg_file)
+	end
 
 	print("Resetting machine...")
 	local start_adr = word(

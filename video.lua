@@ -1,8 +1,6 @@
-VIC_BANK = 0xDD00
-
 VicII = {
 	-- Horizontal raster scroll, screen width, multicolor
-	screen_control_register_1 = 00,
+	screen_control_register_1 = 0,
 	screen_control_register_2 = 0xC8,
 	sprite_sprite_collision_reg = 0,
 	sprite_bg_collision_reg = 0,
@@ -15,6 +13,7 @@ VicII = {
 	extra_bg_color_3 = 0,
 	sprite_double_width_reg = 0,
 	sprite_multicolor_mode_reg = 0,
+	sprite_priority_reg = 0,
 	sprites = {},
 }
 
@@ -28,26 +27,64 @@ function VicII:get(adr)
 		end
 	end
 
-	print("ADR", adr)
-
 	if adr >= 0 and adr <= 0xF then
 		if adr % 2 == 0 then
 			return self.sprites[adr / 2].x
 		else
 			return self.sprites[(adr - 1) / 2].y
 		end
+	elseif adr == 0x11 then
+		return self.screen_control_register_1
 	elseif adr == 0x12 then
 		-- Return current raster line
 		return 0
+	elseif adr == 0x15 then
+		return self.sprite_enable_register
 	elseif adr == 0x16 then
 		return self.screen_control_register_2
+	elseif adr == 0x17 then
+		return self.sprite_double_height_reg
+	elseif adr == 0x18 then
+		return self.memory_setup_reg
 	elseif adr == 0x19 then
 		-- Return interrupt status (raster line, collisions, etc)
 		return 0
+	elseif adr == 0x1B then
+		return self.sprite_priority_reg
+	elseif adr == 0x1C then
+		return self.sprite_multicolor_mode_reg
+	elseif adr == 0x1D then
+		return self.sprite_double_width_reg
+	elseif adr == 0x1E then
+		return self.sprite_sprite_collision_reg
+	elseif adr == 0x1F then
+		return self.sprite_bg_collision_reg
+	elseif adr == 0x20 then
+		return self.border_color
+	elseif adr == 0x21 then
+		return self.background_color
+	elseif adr == 0x25 then
+		return self.sprite_extra_color_1
+	elseif adr == 0x26 then
+		return self.sprite_extra_color_2
+	elseif adr >= 0x27 and adr <= 0x2E then
+		return self.sprites[adr - 0x27].color
 	else
 		notimplemented("")
 		return 0
 	end
+end
+
+function VicII:get_screen_offset()
+	return bit.band(bit.rshift(self.memory_setup_reg, 4), 0xF) * 0x400
+end
+
+function VicII:get_char_offset()
+	if not self:is_text_mode() then
+		print("can not get char mem offset in bitmap mode")
+		return 0
+	end
+	return bit.band(bit.rshift(self.memory_setup_reg, 1), 7) * 0x800
 end
 
 function VicII:set(adr, val)
@@ -132,14 +169,16 @@ function VicII:step(adr, data)
 		if data ~= nil then
 			self:set(adr, data)
 		else
-			print("Should return something. Will return", self:get(adr))
 			return self:get(adr)
 		end
 	end
 end
 
 function VicII:new(props)
-	local v = setmetatable(props or {}, { __index = self })
+	local v = {
+		memory_setup_reg = 0,
+	}
+
 	v.sprites = {
 		[0] = { color = 0, x = 0, y = 0 },
 		[1] = { color = 0, x = 0, y = 0 },
@@ -150,19 +189,15 @@ function VicII:new(props)
 		[6] = { color = 0, x = 0, y = 0 },
 		[7] = { color = 0, x = 0, y = 0 },
 	}
+
+	setmetatable(props or v, self)
+	VicII.__index = VicII
 	return v
 end
 
 -- Returns true if text mode, and false if bitmap mode
 function VicII:is_text_mode()
-	return bit_set(self.screen_control_register_1, 5)
-end
-
-function VicII:get_char_memory_ptr()
-	if not self:is_text_mode() then
-		fatal("can not get char mem offset in bitmap mode")
-	end
-	return bit.lshift(bit.band(self.memory_setup_reg, 0x7), 11)
+	return not bit_set(self.screen_control_register_1, 5)
 end
 
 -- Do a naive render of the whole screen
@@ -193,16 +228,31 @@ function VicII:naive_render(draw, c64)
 	-- 3C ..1111..
 
 	local bg = self.background_color
-	-- local char_offset = 0xD000 -- self:get_char_memory_ptr()
-	local char_offset = 0
+
+	local vic_bank = c64:get_vic_bank()
+	local char_offset = self:get_char_offset()
+	local scr = self:get_screen_offset()
+
+	-- Memory references:
+	-- https://www.c64-wiki.com/wiki/VIC_bank
+	local use_char_rom = (vic_bank == 0 or vic_bank == 0x8000) and (char_offset == 0x1000 or char_offset == 0x1800)
+
 	for cy = 0, 24 do
 		for cx = 0, 39 do
 			local fg = bit.band(c64.color_ram[cy * 40 + cx], 0xF)
-			local char = c64:inspect(0x400 + cy * 40 + cx)
+			local char = c64:inspect(vic_bank + scr + cy * 40 + cx)
+			-- printf("char: %x\n", char)
 			local ptr = char_offset + char * 8
 			local x = cx * 8
 			for y = 0, 7 do
-				local row = c64.char_rom[ptr + y]
+				local ptry = ptr + y
+
+				local row
+				if use_char_rom then
+					row = c64.char_rom[char_offset + char * 8 + y - 0x1000]
+				else
+					row = c64:inspect(char * 8 + 0x9000 + y) -- vic_bank + ptry)
+				end
 
 				if bit_set(row, 7) then
 					draw(x + BORDER, y + BORDER + cy * 8, fg)

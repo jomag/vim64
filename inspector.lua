@@ -24,10 +24,24 @@ function format_cia(name, cia)
 		cia.timer_a.start,
 		cia.timer_b.value,
 		cia.timer_b.start,
-		cia.port_a.value,
-		cia.port_b.value,
+		cia:get_port_a(),
+		cia:get_port_b(),
 		cia.port_a.dir,
 		cia.port_b.dir
+	)
+end
+
+function format_vic()
+	local vic = STATE.machine.vic
+	local c64 = STATE.machine
+
+	local txt =
+	"-- VIC-II --\nBANK: %04x\nCHAR: %04x\nSCR:  %04x\n"
+
+	return txt:format(
+		c64:get_vic_bank(),
+		vic:get_char_offset(),
+		vic:get_screen_offset()
 	)
 end
 
@@ -47,6 +61,8 @@ function draw_inspector()
 
 	draw_textbox(18, 1, 20, 18, format_cia("CIA1", cia1))
 	draw_textbox(18, 20, 20, 18, format_cia("CIA2", cia2))
+
+	draw_textbox(39, 1, 20, 18, format_vic())
 
 	if numeric_prefix ~= "" then
 		local tw = 8 * #numeric_prefix
