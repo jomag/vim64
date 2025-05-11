@@ -98,7 +98,6 @@ end
 function Cpu6502:get_p()
 	local p = 0
 
-	-- FIXME: handle over types of interrupts
 	-- TODO: make more efficient by setting B on state change instead
 	--       of calculating it on every call to get_p() ...
 	local b = 16
@@ -164,7 +163,8 @@ function Cpu6502:reset_sequence(start_address, preload_data_hack)
 		self.pc = start_address
 	end
 	self.sp = 0xBD
-	self:prepare_op(0, start_address)
+	self.ir = 0
+	self.op_adr = start_address
 	self.op_cycle = 0
 	self.cycle = 0
 	self.adr = self.pc
@@ -205,10 +205,15 @@ function Cpu6502:step()
 	self.cycle = self.cycle + 1
 
 	local instr = self.instructions[self.ir]
-	local instr_cycles = 1
-	while instr[instr_cycles] ~= nil do
-		instr_cycles = instr_cycles + 1
+	if instr == nil then
+		fatal("Unimplemented op: 0x%02x", self.ir)
+		return
 	end
+
+	local instr_cycles = 1
+	-- while instr[instr_cycles] ~= nil do
+	-- instr_cycles = instr_cycles + 1
+	-- end
 
 	if self.op_cycle == 0 then
 		self.brk_contaminated = self.data == 0
@@ -248,11 +253,6 @@ function Cpu6502:step()
 		end
 	end
 
-	if instr == nil then
-		fatal("Unimplemented op: 0x%02x", self.ir)
-		return
-	end
-
 	-- Hack to restore PC if interrupt triggered
 	local pc_before = self.pc
 	local adr_before = self.adr
@@ -266,11 +266,6 @@ function Cpu6502:step()
 			self.adr = adr_before
 		end
 	end
-end
-
-function Cpu6502:prepare_op(opcode, adr)
-	self.ir = opcode
-	self.op_adr = adr
 end
 
 require "cpu_6502_instr"

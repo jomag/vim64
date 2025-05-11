@@ -17,21 +17,26 @@ VicII = {
 	sprites = {},
 }
 
-function VicII:get(adr)
-	local function notimplemented(msg)
-		local info = ("VicII: Not Implemented: %s (@%04X)\n"):format(msg, adr + 0xD000)
-		if self.ignore_unimplemented then
-			print(info)
-		else
-			fatal(info)
-		end
-	end
+function VicII:pet2ascii(pet)
+	local conv_a = "@ABCDEFGHIJKLMNOPQRSTUVWXYZ[$]?? !\"#$%&'()*+,-./0123456789:;<=>?"
+	local conv_b = "@abcdefghijklmnopqrstuvwxyz[$]?? !\"#$%&'()*+,-./0123456789:;<=>?-ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
+	local conv = (self:get_char_offset() == 0x1800 and conv_b) or conv_a
+
+	local asc = conv:sub(pet + 1, pet + 1)
+	if asc == nil or asc == "" then
+		return " "
+	else
+		return asc
+	end
+end
+
+function VicII:get(adr)
 	if adr >= 0 and adr <= 0xF then
 		if adr % 2 == 0 then
-			return self.sprites[adr / 2].x
+			return self.sprites[bit.rshift(adr, 1)].x
 		else
-			return self.sprites[(adr - 1) / 2].y
+			return self.sprites[bit.rshift(adr, 1)].y
 		end
 	elseif adr == 0x11 then
 		return self.screen_control_register_1
@@ -70,7 +75,12 @@ function VicII:get(adr)
 	elseif adr >= 0x27 and adr <= 0x2E then
 		return self.sprites[adr - 0x27].color
 	else
-		notimplemented("")
+		local info = ("VicII: Not Implemented: (@%04X)\n"):format(msg, adr + 0xD000)
+		if self.ignore_unimplemented then
+			print(info)
+		else
+			fatal(info)
+		end
 		return 0
 	end
 end
@@ -88,25 +98,16 @@ function VicII:get_char_offset()
 end
 
 function VicII:set(adr, val)
-	local function notimplemented(msg)
-		local info = ("VicII: Not Implemented: %s (@%04X = %02X)\n"):format(msg, adr + 0xD000, val)
-		if self.ignore_unimplemented then
-			print(info)
-		else
-			fatal(info)
-		end
-	end
-
 	if adr >= 0 and adr <= 0xF then
 		if adr % 2 == 0 then
-			self.sprites[adr / 2].x = bit.band(val, 0x7F)
+			self.sprites[bit.rshift(adr, 1)].x = bit.band(val, 0x7F)
 		else
-			self.sprites[(adr - 1) / 2].y = val
+			self.sprites[bit.rshift(adr, 1)].y = val
 		end
 	elseif adr == 0x10 then
 		-- The 8'th bit of each sprites X coordinate!
 		for i = 0, 7 do
-			if bit_set(val, 0) then
+			if bit0(val) then
 				self.sprites[i].x = bit.bor(val, 0x80)
 			else
 				self.sprites[i].x = bit.band(val, 0x7F)
@@ -158,7 +159,12 @@ function VicII:set(adr, val)
 	elseif adr >= 0x27 and adr <= 0x2E then
 		self.sprites[adr - 0x27].color = val
 	else
-		notimplemented("")
+		local info = ("VicII: Not Implemented: %s (@%04X = %02X)\n"):format(msg, adr + 0xD000, val)
+		if self.ignore_unimplemented then
+			print(info)
+		else
+			fatal(info)
+		end
 	end
 end
 
@@ -197,7 +203,22 @@ end
 
 -- Returns true if text mode, and false if bitmap mode
 function VicII:is_text_mode()
-	return not bit_set(self.screen_control_register_1, 5)
+	return not bit5(self.screen_control_register_1)
+end
+
+function VicII:naive_text_render(c64)
+	local vic_bank = c64:get_vic_bank()
+	local scr = self:get_screen_offset()
+	local rows = {}
+	for y = 0, 24 do
+		row = {}
+		for x = 0, 39 do
+			local c = c64:inspect(vic_bank + scr + y * 40 + x)
+			row[#row + 1] = self:pet2ascii(c)
+		end
+		rows[#rows + 1] = table.concat(row)
+	end
+	return rows
 end
 
 -- Do a naive render of the whole screen

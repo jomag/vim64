@@ -11,15 +11,6 @@ CIA = {
 }
 
 function CIA:get(adr)
-	local function notimplemented(msg)
-		local info = ("CIA: Not Implemented: %s (@%04X)\n"):format(msg, adr)
-		if self.ignore_unimplemented then
-			print(info)
-		else
-			fatal(info)
-		end
-	end
-
 	adr = bit.band(adr, 0xF)
 
 	if adr == 0x00 then
@@ -37,20 +28,16 @@ function CIA:get(adr)
 	elseif adr == 0x0E then
 		return self.timer_a.control
 	else
-		notimplemented("Invalid address")
-	end
-end
-
-function CIA:set(adr, val)
-	local function notimplemented(msg)
-		local info = ("CIA: Not Implemented: %s (@%04X = %02X)\n"):format(msg, adr, val)
+		local info = ("CIA: Invalid address (@%04X)\n"):format(adr)
 		if self.ignore_unimplemented then
 			print(info)
 		else
 			fatal(info)
 		end
 	end
+end
 
+function CIA:set(adr, val)
 	adr = bit.band(adr, 0xF)
 
 	if adr == 0x00 then
@@ -104,7 +91,12 @@ function CIA:set(adr, val)
 		self.timer_b.control = bit.band(val, 0xEF)
 		print(self:debug_print())
 	else
-		notimplemented("Invalid address")
+		local info = ("CIA: Invalid address (@%04X = %02X)\n"):format(adr, val)
+		if self.ignore_unimplemented then
+			print(info)
+		else
+			fatal(info)
+		end
 	end
 
 	-- print("\nCIA status update after change:")
@@ -191,12 +183,12 @@ end
 function CIA:step(adr, data, inp_a, inp_b)
 	local retval = nil
 
-	if adr ~= nil and data ~= nil then
-		self:set(adr, data)
-	end
-
-	if adr ~= nil and data == nil then
-		retval = self:get(adr)
+	if adr ~= nil then
+		if data ~= nil then
+			self:set(adr, data)
+		else
+			retval = self:get(adr)
+		end
 	end
 
 	if inp_a ~= nil then
@@ -207,8 +199,8 @@ function CIA:step(adr, data, inp_a, inp_b)
 		self.port_b.input = inp_b
 	end
 
-	if not bit_set(self.timer_a.control, 5) then
-		if bit_set(self.timer_a.control, 0) then
+	if not bit5(self.timer_a.control) then
+		if bit0(self.timer_a.control) then
 			if self.timer_a.value == 0 then
 				self.int_data = bit.bor(self.int_data, 1)
 				if bit.band(self.int_mask, 1) == 0 then
@@ -219,7 +211,7 @@ function CIA:step(adr, data, inp_a, inp_b)
 				end
 
 				self.timer_a.value = self.timer_a.start
-				if bit_set(self.timer_a.control, 4) then
+				if bit4(self.timer_a.control) then
 					self.timer_a.running = false
 				end
 			else
@@ -228,8 +220,8 @@ function CIA:step(adr, data, inp_a, inp_b)
 		end
 	end
 
-	if not bit_set(self.timer_b.control, 5) then
-		if bit_set(self.timer_b.control, 0) then
+	if not bit5(self.timer_b.control) then
+		if bit0(self.timer_b.control) then
 			if self.timer_b.value == 0 then
 				self.int_data = bit.bor(self.int_data, 2)
 				if bit.band(self.int_mask, 2) == 0 then
@@ -241,7 +233,7 @@ function CIA:step(adr, data, inp_a, inp_b)
 				end
 
 				self.timer_b.value = self.timer_a.start
-				if bit_set(self.timer_b.control, 4) then
+				if bit4(self.timer_b.control) then
 					self.timer_b.running = false
 				end
 			else

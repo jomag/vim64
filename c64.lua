@@ -1,5 +1,24 @@
 C64 = {}
 
+C64_COLORS = {
+	[0] = { 0x00, 0x00, 0x00 },
+	[1] = { 0xFF, 0xFF, 0xFF },
+	[2] = { 0x88, 0x00, 0x00 },
+	[3] = { 0xAA, 0xFF, 0xEE },
+	[4] = { 0xCC, 0x44, 0xCC },
+	[5] = { 0x00, 0xCC, 0x55 },
+	[6] = { 0x00, 0x00, 0xAA },
+	[7] = { 0xEE, 0xEE, 0x77 },
+	[8] = { 0xDD, 0x88, 0x55 },
+	[9] = { 0x66, 0x44, 0x00 },
+	[10] = { 0xFF, 0x77, 0x77 },
+	[11] = { 0x33, 0x33, 0x33 },
+	[12] = { 0x77, 0x77, 0x77 },
+	[13] = { 0xAA, 0xFF, 0x66 },
+	[14] = { 0x00, 0x88, 0xFF },
+	[15] = { 0xBB, 0xBB, 0xBB }
+}
+
 function C64:new(props, kernal_path, basic_path, char_path)
 	local ram = {}
 	for i = 0, 65536 do
@@ -109,14 +128,17 @@ function C64:step()
 	self.cpu:step()
 
 	if self.prg_binary ~= nil and self.cpu.pc == 0xA474 then
-		print("BASIC loop reached. Injecting .PRG file into memory.")
+		-- print("BASIC loop reached. Injecting .PRG file into memory.")
 		local prg = self.prg_binary
 		local adr = prg[0] + prg[1] * 256
-		printf("Loading %d bytes into memory at $%04x\n", #prg + 1, adr)
+		-- printf("Loading %d bytes into memory at $%04x\n", #prg + 1, adr)
 
 		for i = 0, #prg - 2 do
-			STATE.machine:set(adr + i, prg[i + 2])
+			self:set(adr + i, prg[i + 2])
 		end
+
+		-- Clear it so it does not happen again
+		self.prg_binary = nil
 	end
 
 	local chip, adr = self:update_bus(self.cpu.adr)

@@ -22,7 +22,8 @@ STATE = {
 	machine = nil
 }
 
-COLORS = {
+-- Love wants color values as float point (0..1)
+FP_COLORS = {
 	[0] = { 0x00 / 0xFF, 0x00 / 0xFF, 0x00 / 0xFF },
 	[1] = { 0xFF / 0xFF, 0xFF / 0xFF, 0xFF / 0xFF },
 	[2] = { 0x88 / 0xFF, 0x00 / 0xFF, 0x00 / 0xFF },
@@ -237,7 +238,7 @@ function love.update()
 	step(16667)
 
 	STATE.machine.vic:naive_render(function(x, y, c)
-		local cc = COLORS[c]
+		local cc = FP_COLORS[c]
 		STATE.buf:setPixel(x, y, cc[1], cc[2], cc[3], 1)
 	end, STATE.machine)
 end

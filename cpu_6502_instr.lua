@@ -22,21 +22,13 @@ ADR_REL = "rel"
 ADR_IND = "ind"
 
 local function update_flags(cpu, val)
-	if val == 0 then
-		cpu.p.z = true
-	else
-		cpu.p.z = false
-	end
-
-	if bit7(val) then
-		cpu.p.n = true
-	else
-		cpu.p.n = false
-	end
+	cpu.p.z = val == 0
+	cpu.p.n = bit7(val)
 end
 
 local function prepare_next_op(cpu)
-	cpu:prepare_op(cpu.data, cpu.adr)
+	cpu.ir = cpu.data
+	cpu.op_adr = cpu.adr
 	cpu.op_cycle = 1
 	cpu.pc = cpu.pc + 1
 	cpu.adr = cpu.pc
@@ -1252,7 +1244,8 @@ local function branch_op(mnemonic, condition_cb)
 					cpu.op_cycle = 4
 				end
 			else
-				cpu:prepare_op(cpu.data, cpu.adr)
+				cpu.ir = cpu.data
+				cpu.op_adr = cpu.adr
 				cpu.pc = cpu.pc + 1
 				cpu.adr = cpu.pc
 				cpu.op_cycle = 1
@@ -1266,7 +1259,8 @@ local function branch_op(mnemonic, condition_cb)
 		end,
 
 		[4] = function(cpu)
-			cpu:prepare_op(cpu.data, cpu.adr)
+			cpu.ir = cpu.data
+			cpu.op_adr = cpu.adr
 			cpu.pc = cpu.pc + 1
 			cpu.adr = cpu.pc
 			cpu.op_cycle = 1

@@ -21,6 +21,10 @@ function bit5(value)
 	return bit.band(value, 32) ~= 0
 end
 
+function bit4(value)
+	return bit.band(value, 16) ~= 0
+end
+
 function bit3(value)
 	return bit.band(value, 8) ~= 0
 end
@@ -128,6 +132,7 @@ function load_bin(path)
 	local data = f:read("*all")
 	f:close()
 
+
 	local bin = {}
 	for i = 1, #data do
 		bin[i - 1] = string.byte(data, i)
@@ -160,16 +165,6 @@ function get_key_count(tbl)
 	local count = 0
 	for _ in pairs(tbl) do count = count + 1 end
 	return count
-end
-
-function pet2ascii(pet)
-	conv = "@ABCDEFGHIJKLMNOPQRSTUVWXYZ[$]?? !\"#$%&'()*+,-./0123456789:;<=>?"
-	asc = conv:sub(pet + 1, pet + 1)
-	if asc == nil then
-		return " "
-	else
-		return asc
-	end
 end
 
 function is_digit(s)

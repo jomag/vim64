@@ -88,14 +88,17 @@ end
 local ctr = 0
 
 function Keyboard:key_down(key)
-	print("KEY DOWN", key)
 	self.pressed[key] = key_table[key]
 	self.cache = {}
 end
 
 function Keyboard:key_up(key)
-	print("KEY UP", key)
 	self.pressed[key] = nil
+	self.cache = {}
+end
+
+function Keyboard:release_all()
+	self.pressed = {}
 	self.cache = {}
 end
 
@@ -105,7 +108,7 @@ function Keyboard:scan(row)
 		return cached
 	end
 
-	nrow = bit.band(bit.bnot(row), 0xFF)
+	local nrow = bit.band(bit.bnot(row), 0xFF)
 
 	local out = 0
 	for _, k in pairs(self.pressed) do
